@@ -2,7 +2,6 @@ import os
 import time
 import base64
 import ast
-import logging
 from io import BytesIO
 import operator
 import smtplib
@@ -10,7 +9,6 @@ import shutil
 import tempfile
 import hashlib
 import hmac
-import secrets
 import uuid
 import re
 from datetime import datetime
@@ -28,7 +26,7 @@ except ModuleNotFoundError:
 TESSERACT_NOT_FOUND_ERROR = getattr(pytesseract, "TesseractNotFoundError", RuntimeError)
 from storage import BACKUP_DIR, DB_FILE, create_backup, delete_scanner_photo, history_count, load_state as load_sqlite_state
 from storage import restore_backup, save_scanner_photo, save_state as save_sqlite_state
-from app_logic import FULL_DAY_RATES, TIER_TABLE, budget_alert_status, calculate_labor_pay, get_partial_rate, monthly_trend_summary
+from app_logic import FULL_DAY_RATES, TIER_TABLE, calculate_labor_pay, get_partial_rate
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 STATE_FILE = os.path.join(APP_DIR, "app_state.json")
@@ -36,14 +34,6 @@ EXCEL_FILE = os.path.join(APP_DIR, "ailyn_project_ledger.xlsx")
 MATERIALS_EXCEL_FILE = os.path.join(APP_DIR, "materials_ledger.xlsx")
 LABOR_EXCEL_FILE = os.path.join(APP_DIR, "labor_ledger.xlsx")
 PHILIPPINES_TZ = ZoneInfo("Asia/Manila")
-
-LOGGER = logging.getLogger("ailyn_house")
-if not LOGGER.handlers:
-    logger_handler = logging.FileHandler(os.path.join(APP_DIR, "ailyn_house.log"), encoding="utf-8")
-    logger_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-    LOGGER.addHandler(logger_handler)
-LOGGER.setLevel(logging.INFO)
-LOGGER.propagate = False
 
 
 def manila_now():
@@ -122,7 +112,6 @@ PERSISTENT_KEYS = [
     "client_notes",
     "app_settings",
     "messages",
-    "auth_users",
 ]
 
 def load_state():
@@ -273,170 +262,21 @@ ADMIN_PASSWORD = os.getenv("AILYN_ADMIN_PASSWORD", "")
 UPDATE_SIGNING_KEY = os.getenv("AILYN_UPDATE_SIGNING_KEY", "")
 LOGIN_PASSWORD = os.getenv("AILYN_LOGIN_PASSWORD", "")
 
-
-def hash_account_password(password, salt=None):
-    salt = salt or secrets.token_hex(16)
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 240000).hex()
-    return salt, digest
-
-
-def verify_account_password(password, account):
-    _, digest = hash_account_password(password, account.get("salt", ""))
-    return hmac.compare_digest(digest, account.get("password_hash", ""))
-
-
-def authenticate_account(username, password, accounts):
-    account = next((item for item in accounts if item.get("username", "").lower() == username.strip().lower()), None)
-    return account is not None and verify_account_password(password, account)
-
-# ================================================================
-# OWN APP LOGO / FAVICON
-# The app uses its embedded Ailyn House logo, so no external logo
-# website or CDN is required. Replace AILYN_LOGO_DATA above with
-# your own PNG/JPG data URI if you want a different logo.
-# ================================================================
-try:
-    _logo_b64 = AILYN_LOGO_DATA.split(",", 1)[1]
-    APP_LOGO_IMAGE = Image.open(BytesIO(base64.b64decode(_logo_b64))).convert("RGBA")
-except Exception:
-    APP_LOGO_IMAGE = None
-
-# ================================================================
-# CUSTOM HOME-SCREEN / PWA SUPPORT
-# ================================================================
-# Streamlit itself does not provide a native manifest.json editor.
-# These endpoints expose the app's PWA metadata when the app is
-# hosted behind a normal web server/proxy that routes these paths.
-# The browser can then use the supplied 192x192 and 512x512 icons.
-# ================================================================
-
-PWA_APP_NAME = APP_NAME
-PWA_SHORT_NAME = "Ailyn Planner"
-PWA_THEME_COLOR = "#071b11"
-
-def _pwa_manifest():
-    return {
-        "name": PWA_APP_NAME,
-        "short_name": PWA_SHORT_NAME,
-        "start_url": "./",
-        "scope": "./",
-        "display": "standalone",
-        "orientation": "portrait-primary",
-        "background_color": PWA_THEME_COLOR,
-        "theme_color": PWA_THEME_COLOR,
-        "description": "Ailyn House project planner",
-        "icons": [
-            {
-                "src": "logo-192.png",
-                "sizes": "192x192",
-                "type": "image/png",
-                "purpose": "any maskable"
-            },
-            {
-                "src": "logo-512.png",
-                "sizes": "512x512",
-                "type": "image/png",
-                "purpose": "any maskable"
-            }
-        ]
-    }
-
-def _pwa_manifest_json():
-    return json.dumps(_pwa_manifest(), separators=(",", ":"))
-
-def _pwa_install_metadata():
-    # The meta/link tags below are injected into the app HTML.
-    # They are harmless if the deployment proxy does not expose
-    # the manifest/icon paths, and become active when those files
-    # are served by the deployment.
-    return f"""
-    <link rel="manifest" href="./manifest.json">
-    <meta name="mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="{html.escape(PWA_SHORT_NAME)}">
-    <meta name="theme-color" content="{PWA_THEME_COLOR}">
-    <link rel="apple-touch-icon" href="./logo-192.png">
-    """
-
-
-
-def render_pwa_install_info():
-    st.markdown(
-        """
-        <div style="
-            padding:14px 16px;
-            border:1px solid rgba(114,247,176,.22);
-            border-radius:14px;
-            background:rgba(114,247,176,.06);
-            margin:10px 0;
-        ">
-            <b>📱 ADD TO PHONE HOME SCREEN</b><br>
-            <span style="opacity:.8;font-size:13px;">
-            Open this app in your phone browser and choose
-            <b>Add to Home screen</b>. The custom app icon is supplied
-            by the PWA manifest when the deployment serves the icon files.
-            </span>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
 st.set_page_config(
     page_title=APP_NAME,
-    page_icon=APP_LOGO_IMAGE if APP_LOGO_IMAGE is not None else "🏠",
+    page_icon="🅰️",
     layout="wide",
 )
 
-google_auth = st.secrets.get("auth", {})
-google_auth_ready = bool(
-    google_auth.get("client_id")
-    and google_auth.get("client_secret")
-    and google_auth.get("server_metadata_url")
-)
-
-google_user = st.user.to_dict() if google_auth_ready else {}
-if google_user.get("is_logged_in", False):
-    st.session_state.authenticated = True
-    st.session_state.authenticated_user = google_user.get("name") or google_user.get("email") or "Google user"
-
-# CUSTOM PWA BRANDING ACTIVE
-# Browser favicon is configured by st.set_page_config(page_icon=...).
-# The manifest/apple-touch-icon metadata is available for deployments
-# that expose manifest.json and the icon assets.
-
-
-if not st.session_state.get("authenticated"):
-    st.markdown(f"""
-    <style>
-    .stApp {{ background: url("https://images.unsplash.com/photo-1600585154340-be6161a56a0c") center/cover fixed !important; }}
-    .stApp:before {{ content:""; position:fixed; inset:0; background:linear-gradient(135deg,rgba(3,30,18,.78),rgba(10,85,45,.72)); pointer-events:none; }}
-    .auth-shell {{ position:relative; z-index:1; max-width:560px; margin:5vh auto 0; padding:42px 34px 34px; border:1px solid rgba(200,255,224,.32); border-radius:24px; background:rgba(6,27,18,.82); box-shadow:0 28px 80px rgba(0,0,0,.42), inset 0 1px 0 rgba(255,255,255,.12); text-align:center; }}
-    .auth-logo {{ width:92px; height:92px; object-fit:contain; margin-bottom:12px; filter:drop-shadow(0 10px 20px rgba(0,0,0,.35)); }}
-    .auth-title {{ color:#f5fff8; font-family:'Outfit',sans-serif; font-size:30px; font-weight:900; letter-spacing:.08em; margin:0; }}
-    .auth-subtitle {{ color:#a9c9b5; font-size:15px; margin:8px 0 28px; }}
-    .auth-note {{ color:#a9c9b5; font-size:12px; margin-top:18px; }}
-    [data-testid="stForm"] {{ border:0 !important; padding:0 !important; background:transparent !important; }}
-    @media (max-width:600px) {{ .auth-shell {{ margin:2vh 10px 0; padding:32px 20px 26px; }} .auth-title {{ font-size:23px; }} }}
-    </style>
-    <div class="auth-shell">
-      <img class="auth-logo" src="{AILYN_LOGO_DATA}" alt="Ailyn House logo">
-      <h1 class="auth-title">AILYN HOUSE PROJECT</h1>
-      <div class="auth-subtitle">Project Management System</div>
-    </div>
-    """, unsafe_allow_html=True)
-    with st.form("sign_in_form", clear_on_submit=False):
-        username = st.text_input("Name (optional)", placeholder="Leave blank to continue as Guest", key="auth_username")
-        submitted = st.form_submit_button("↪  ENTER APP", use_container_width=True)
-    if submitted:
-        st.session_state.authenticated = True
-        st.session_state.authenticated_user = username.strip() or "Guest"
-        st.rerun()
-    if google_auth_ready:
-        if st.button("CONTINUE WITH GOOGLE", use_container_width=True):
-            st.login()
-    else:
-        st.caption("Anyone can leave the name blank and press Enter to continue. Google passkeys can use Face ID when configured.")
+if LOGIN_PASSWORD and not st.session_state.get("authenticated"):
+    st.title("Ailyn House Project")
+    st.caption("Sign in to access this project workspace.")
+    login_password = st.text_input("Workspace password", type="password")
+    if st.button("SIGN IN", use_container_width=True):
+        if hmac.compare_digest(login_password, LOGIN_PASSWORD):
+            st.session_state.authenticated = True
+            st.rerun()
+        st.error("Invalid workspace password.")
     st.stop()
 
 # Load persisted state safely
@@ -474,7 +314,7 @@ if st.session_state.view not in {
     "home", "payroll_dashboard", "planner_input", "planner_output", "material",
     "expense", "excess", "ledger", "add_labor", "add_payroll_expense",
     "payroll_remaining", "payroll_ledger", "export", "payroll_export",
-    "receipt_archive",
+    "receipt_archive", "photo_scanner", "project_tools", "settings", "communications", "client_portal", "update",
 }:
     st.session_state.view = "home"
 if "selected_role" not in st.session_state:
@@ -485,12 +325,43 @@ if "editing_labor_index" not in st.session_state:
     st.session_state.editing_labor_index = None
 if "editing_payroll_expense_index" not in st.session_state:
     st.session_state.editing_payroll_expense_index = None
+if "scanner_input_version" not in st.session_state:
+    st.session_state.scanner_input_version = 0
+if "scanner_actions_open" not in st.session_state:
+    st.session_state.scanner_actions_open = False
+if "scanner_open" not in st.session_state:
+    st.session_state.scanner_open = False
+if "scanner_flash_mode" not in st.session_state:
+    st.session_state.scanner_flash_mode = "Auto"
+if "scanner_camera_mode" not in st.session_state:
+    st.session_state.scanner_camera_mode = "Back camera"
+if "client_notes" not in st.session_state:
+    st.session_state.client_notes = []
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "app_settings" not in st.session_state:
+    st.session_state.app_settings = {
+        "display_name": "",
+        "email": "",
+        "client_mode": False,
+        "email_notifications": True,
+        "budget_alerts": True,
+        "date_format": "%Y-%m-%d",
+        "meeting_url": "",
+    }
+else:
+    st.session_state.app_settings = {
+        "display_name": "",
+        "email": "",
+        "client_mode": False,
+        "email_notifications": True,
+        "budget_alerts": True,
+        "date_format": "%Y-%m-%d",
+        "meeting_url": "",
+        **st.session_state.app_settings,
+    }
 if "dark_mode" not in st.session_state:
     st.session_state.dark_mode = False
-if "audit_events" not in st.session_state:
-    st.session_state.audit_events = []
-if "current_user_role" not in st.session_state:
-    st.session_state.current_user_role = "manager"
 if not os.path.exists(EXCEL_FILE):
     write_excel(st.session_state)
 if not os.path.exists(MATERIALS_EXCEL_FILE) or not os.path.exists(LABOR_EXCEL_FILE):
@@ -513,15 +384,68 @@ def project_settings_dialog():
         status = st.selectbox("Project status", ["Planning", "Active", "On Hold", "Completed"], index=["Planning", "Active", "On Hold", "Completed"].index(project.get("status", "Active")))
         target_date = st.date_input("Target completion", value=datetime.fromisoformat(project["target_date"]).date() if project.get("target_date") else manila_now().date())
         if st.form_submit_button("SAVE PROJECT DETAILS", use_container_width=True):
-            if not user_can_edit({"manager", "admin"}):
-                st.warning("Only managers can edit project details.")
-            elif not name.strip():
+            if not name.strip():
                 st.error("Project name is required.")
             else:
                 st.session_state.project = {"name": name.strip(), "client": client.strip(), "address": address.strip(), "manager": manager.strip(), "status": status, "target_date": target_date.isoformat()}
-                add_audit_event("project_updated", {"project": st.session_state.project})
                 persist_state()
                 st.success("Project details saved.")
+
+
+@st.dialog("Notes")
+def notes_dialog():
+    st.caption("Project notes, approvals, and photo comments")
+    folders = ["Site Notes", "Client Approval", "Photo Comments", "Change Requests"]
+    folders += [folder for folder in sorted({note.get("folder", "Site Notes") for note in st.session_state.client_notes}) if folder not in folders]
+    folder = st.selectbox("Folder", folders, key="popup_note_folder")
+    new_folder = st.text_input("New folder", key="popup_new_note_folder", placeholder="Optional folder name")
+    text = st.text_area("Note", key="popup_note_text", height=80, placeholder="Write a note for the project...")
+    if st.button("ADD NOTE", use_container_width=True, key="popup_add_note"):
+        if text.strip():
+            st.session_state.client_notes.insert(0, {"id": str(uuid.uuid4()), "folder": new_folder.strip() or folder, "text": text.strip(), "created_at": manila_now().isoformat()})
+            persist_state()
+            st.rerun()
+        st.warning("Write a note before saving.")
+    if st.session_state.client_notes:
+        st.markdown("#### RECENT NOTES")
+        st.dataframe([
+            {"Folder": note.get("folder", "Site Notes"), "Date": note.get("created_at", "").replace("T", " ")[:16], "Note": note.get("text", "")}
+            for note in st.session_state.client_notes[:8]
+        ], use_container_width=True, hide_index=True)
+        note_to_delete = st.selectbox("Delete note", ["Choose a note"] + [f"{note.get('created_at', '')[:16]} | {note.get('text', '')[:45]}" for note in st.session_state.client_notes[:8]], key="popup_delete_note_select")
+        if note_to_delete != "Choose a note" and st.button("DELETE SELECTED NOTE", use_container_width=True, key="popup_delete_note"):
+            selected_index = [f"{note.get('created_at', '')[:16]} | {note.get('text', '')[:45]}" for note in st.session_state.client_notes[:8]].index(note_to_delete)
+            st.session_state.client_notes.pop(selected_index)
+            persist_state()
+            st.rerun()
+    else:
+        st.info("No notes yet.")
+
+
+@st.dialog("Settings")
+def settings_dialog():
+    settings = st.session_state.app_settings
+    st.caption("Quick account and project preferences")
+    with st.form("quick_settings_form"):
+        display_name = st.text_input("Display name", value=settings.get("display_name", ""))
+        email = st.text_input("Email", value=settings.get("email", ""))
+        meeting_url = st.text_input("Secure voice/video meeting link", value=settings.get("meeting_url", ""), placeholder="https://meet.google.com/...", help="Use a link from Google Meet, Zoom, or Microsoft Teams.")
+        dark_mode = st.checkbox("Dark mode", value=bool(st.session_state.dark_mode))
+        budget_alerts = st.checkbox("Budget alerts", value=bool(settings.get("budget_alerts", True)))
+        email_notifications = st.checkbox("Email notifications", value=bool(settings.get("email_notifications", True)))
+        if st.form_submit_button("SAVE SETTINGS", use_container_width=True):
+            if email and ("@" not in email or "." not in email.rsplit("@", 1)[-1]):
+                st.error("Enter a valid email address.")
+            else:
+                settings.update({"display_name": display_name.strip(), "email": email.strip(), "meeting_url": meeting_url.strip(), "budget_alerts": budget_alerts, "email_notifications": email_notifications})
+                st.session_state.dark_mode = dark_mode
+                persist_state()
+                st.success("Settings saved.")
+    st.markdown("#### ACCOUNT ACCESS")
+    st.success("Workspace password enabled.") if LOGIN_PASSWORD else st.info("Workspace password is disabled.")
+    if LOGIN_PASSWORD and st.button("SIGN OUT", use_container_width=True, key="popup_sign_out"):
+        st.session_state.authenticated = False
+        st.rerun()
 
 
 def total_materials():
@@ -561,100 +485,6 @@ def monthly_construction_spend(month=None):
         float(record.get("amount", 0)) for record in st.session_state.records
         if record.get("type") in {"material", "expense"} and month_key(record) == month
     )
-
-
-def validate_transaction_input(name, price, qty, delivery, transaction_type="material"):
-    clean_name = (name or "").strip()
-    if not clean_name:
-        raise ValueError("Please enter a valid item name.")
-
-    amount = float(price if price is not None else 0.0)
-    quantity = int(qty if qty is not None else 1)
-    delivery_value = float(delivery if delivery is not None else 0.0)
-
-    if amount <= 0:
-        raise ValueError("Please enter an amount greater than zero.")
-    if transaction_type == "material" and quantity < 1:
-        raise ValueError("Please enter a quantity greater than zero.")
-    if delivery_value < 0:
-        raise ValueError("Delivery cannot be negative.")
-
-    total_amount = (amount * quantity) + delivery_value if transaction_type == "material" else amount
-    return {
-        "name": clean_name.upper(),
-        "price": amount,
-        "qty": quantity,
-        "delivery": delivery_value,
-        "amount": float(total_amount),
-    }
-
-
-def get_monthly_summary(month=None):
-    month = month or manila_now().strftime("%Y-%m")
-
-    def month_range(month_key_value):
-        try:
-            year, month_num = [int(part) for part in month_key_value.split("-")]
-        except ValueError:
-            return None, None
-        return year, month_num
-
-    def previous_month(month_key_value):
-        year, month_num = month_range(month_key_value)
-        if year is None:
-            return month_key_value
-        if month_num == 1:
-            return f"{year - 1}-12"
-        return f"{year}-{month_num - 1:02d}"
-
-    def aggregate(source_records, kind):
-        if kind == "materials":
-            return sum(float(record.get("amount", 0)) for record in source_records if record.get("type") == "material" and month_key(record) == month)
-        if kind == "expenses":
-            return sum(float(record.get("amount", 0)) for record in source_records if record.get("type") == "expense" and month_key(record) == month)
-        if kind == "excess":
-            return sum(float(record.get("amount", 0)) for record in source_records if record.get("type") == "excess" and month_key(record) == month)
-        if kind == "labor":
-            return sum(float(record.get("net", 0)) for record in source_records if month_key(record) == month)
-        if kind == "payroll":
-            return sum(float(record.get("price", 0)) for record in source_records if month_key(record) == month)
-        return 0.0
-
-    materials = aggregate(st.session_state.records, "materials")
-    construction = aggregate(st.session_state.records, "expenses")
-    excess = aggregate(st.session_state.records, "excess")
-    labor = aggregate(st.session_state.labor_records, "labor")
-    payroll = aggregate(st.session_state.payroll_expenses, "payroll")
-    total_spent = materials + construction + labor + payroll
-    budget = float(st.session_state.budget or 0)
-    remaining = budget - total_spent
-    previous_key = previous_month(month)
-
-    previous_materials = aggregate(st.session_state.records, "materials") if False else 0.0
-    previous_construction = previous_materials
-    previous_labor = previous_materials
-    previous_payroll = previous_materials
-
-    previous_materials = sum(float(record.get("amount", 0)) for record in st.session_state.records if record.get("type") == "material" and month_key(record) == previous_key)
-    previous_construction = sum(float(record.get("amount", 0)) for record in st.session_state.records if record.get("type") == "expense" and month_key(record) == previous_key)
-    previous_labor = sum(float(record.get("net", 0)) for record in st.session_state.labor_records if month_key(record) == previous_key)
-    previous_payroll = sum(float(record.get("price", 0)) for record in st.session_state.payroll_expenses if month_key(record) == previous_key)
-    previous_total = previous_materials + previous_construction + previous_labor + previous_payroll
-
-    return {
-        "month": month,
-        "previous_month": previous_key,
-        "materials": materials,
-        "construction": construction,
-        "excess": excess,
-        "labor": labor,
-        "payroll": payroll,
-        "total_spent": total_spent,
-        "budget": budget,
-        "remaining": remaining,
-        "previous_total": previous_total,
-        "delta_from_previous": total_spent - previous_total,
-    }
 
 
 # ================================================================
@@ -736,10 +566,8 @@ def build_html_report(records, budget, custom_title="INVENTORY RECEIPT"):
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css?family=Inter:wght@400;600;700&display=swap');
-* {{ box-sizing: border-box; }}
-html, body {{ width: 100%; max-width: 100%; margin: 0; padding: 0; overflow-x: hidden; }}
 body {{ font-family: 'Inter', sans-serif; background-color: #f0f4f0; margin: 0; padding: 20px; color: #333; }}
-.receipt-container {{ width: min(100%, 980px); max-width: 980px; margin: auto; background: #fff; padding: clamp(16px, 2vw, 30px); border-radius: 4px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); border-top: 10px solid #1b5e20; overflow-wrap: anywhere; word-break: break-word; }}
+.receipt-container {{ max-width: 1000px; margin: auto; background: #fff; padding: 30px; border-radius: 4px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); border-top: 10px solid #1b5e20; }}
 .header {{ display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; margin-bottom: 30px; border-bottom: 2px solid #f0f0f0; padding-bottom: 15px; }}
 .company-info h1 {{ color: #1b5e20; margin: 0; font-size: 24px; letter-spacing: -1px; }}
 .company-info p {{ margin: 4px 0; font-size: 12px; color: #666; }}
@@ -747,9 +575,9 @@ body {{ font-family: 'Inter', sans-serif; background-color: #f0f4f0; margin: 0; 
 @media (min-width: 768px) {{ .receipt-meta {{ text-align: right; margin-top: 0; }} }}
 .receipt-meta h2 {{ margin: 0; font-size: 16px; text-transform: uppercase; color: #1b5e20; }}
 .receipt-meta p {{ margin: 4px 0; font-size: 12px; font-weight: bold; }}
-table {{ width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 12px; table-layout: fixed; }}
+table {{ width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 12px; }}
 th {{ background-color: #1b5e20; color: #ffffff; text-align: left; padding: 10px; text-transform: uppercase; letter-spacing: 1px; }}
-td {{ padding: 10px 8px; border-bottom: 1px solid #f0f0f0; overflow-wrap: anywhere; word-break: break-word; }}
+td {{ padding: 10px 8px; border-bottom: 1px solid #f0f0f0; }}
 .qty-col, .desccol, .pricecol, .deliverycol, .totalcol {{ text-align: left; }}
 td.desccol {{ font-weight: 700; color: #333333; }}
 th.desccol {{ color: #ffffff; }}
@@ -889,10 +717,10 @@ def generate_payroll_html(labor_records, expense_records, remaining_money=0.0, c
 html, body {{ width: 100%; max-width: 100%; margin: 0; overflow-x: hidden; }}
 @import url('https://fonts.googleapis.com/css?family=Inter:wght@400;600;700&display=swap');
 body {{ font-family: 'Inter', sans-serif !important; background-color: #f0f4f0 !important; color: #333; padding: 20px !important; }}
-#receiptContent {{ width: min(100%, 980px); max-width: 980px; margin: 0 auto !important; background: #fff !important; padding: clamp(16px, 2vw, 30px) !important; border-radius: 4px !important; box-shadow: 0 4px 20px rgba(0,0,0,0.08) !important; border-top: 10px solid #1b5e20 !important; overflow-wrap: anywhere; word-break: break-word; }}
-#receiptContent table {{ width: 100%; max-width: 100%; table-layout: fixed; }}
+#receiptContent {{ width: min(100%, 1000px); margin: 0 auto !important; background: #fff !important; padding: 30px !important; border-radius: 4px !important; box-shadow: 0 4px 20px rgba(0,0,0,0.08) !important; border-top: 10px solid #1b5e20 !important; }}
+#receiptContent table {{ max-width: 100%; }}
 #receiptContent th {{ background-color: #1b5e20 !important; color: #fff !important; text-transform: uppercase; letter-spacing: 1px; }}
-#receiptContent td {{ border-bottom: 1px solid #f0f0f0 !important; overflow-wrap: anywhere; word-break: break-word; }}
+#receiptContent td {{ border-bottom: 1px solid #f0f0f0 !important; overflow-wrap: anywhere; }}
 #receiptContent h1, #receiptContent h3 {{ color: #1b5e20 !important; }}
 #receiptContent > table:first-child {{ margin-bottom: 30px !important; }}
 #receiptContent > table:last-of-type td:last-child {{ background: #013220 !important; color: #fff !important; }}
@@ -1025,9 +853,6 @@ function saveAsImage() {{
 
 
 def clear_all():
-    if not user_can_edit({"manager", "admin"}):
-        st.warning("Only managers can clear the workspace data.")
-        return
     st.session_state.records = []
     st.session_state.labor_records = []
     st.session_state.payroll_expenses = []
@@ -1036,8 +861,8 @@ def clear_all():
     st.session_state.budget_history = []
     st.session_state.remaining_money = 0.0
     st.session_state.receipt_archive = []
-    st.session_state.pop("client_notes", None)
-    st.session_state.pop("messages", None)
+    st.session_state.client_notes = []
+    st.session_state.messages = []
     for photo in st.session_state.get("scanner_photos", []):
         delete_scanner_photo(photo.get("file", ""))
     st.session_state.scanner_photos = []
@@ -1052,81 +877,6 @@ def clear_all():
 
 def persist_state():
     save_state(st.session_state)
-
-
-def build_dashboard_summary_payload():
-    budget = float(st.session_state.get("budget", 0) or 0)
-    used = float(get_total() or 0)
-    balance = float(get_balance() or 0)
-    monthly_summary = get_monthly_summary()
-    return {
-        "project": st.session_state.get("project", {}).get("name", "Ailyn House Project"),
-        "budget": budget,
-        "used": used,
-        "balance": balance,
-        "remaining_month": monthly_summary.get("remaining", 0.0),
-        "current_month": monthly_summary.get("month", ""),
-        "previous_month_delta": monthly_summary.get("delta_from_previous", 0.0),
-        "tasks_today": len([t for t in st.session_state.get("planner_tasks", []) if t.get("date_obj") == manila_now().strftime("%Y-%m-%d")]),
-        "tasks_upcoming": len([t for t in st.session_state.get("planner_tasks", []) if t.get("date_obj", "") >= manila_now().strftime("%Y-%m-%d")]),
-    }
-
-
-def dashboard_summary_csv():
-    payload = build_dashboard_summary_payload()
-    lines = [
-        "Metric,Value",
-        f"Project,{payload['project']}",
-        f"Budget,{payload['budget']:.2f}",
-        f"Used,{payload['used']:.2f}",
-        f"Balance,{payload['balance']:.2f}",
-        f"Remaining this month,{payload['remaining_month']:.2f}",
-        f"Current month,{payload['current_month']}",
-        f"Month-over-month delta,{payload['previous_month_delta']:.2f}",
-        f"Tasks today,{payload['tasks_today']}",
-        f"Upcoming tasks,{payload['tasks_upcoming']}",
-    ]
-    return "\n".join(lines)
-
-
-def add_audit_event(event_type, details=None, actor=None):
-    entry = {
-        "id": str(uuid.uuid4()),
-        "timestamp": manila_now().isoformat(),
-        "event_type": event_type,
-        "actor": actor or st.session_state.get("authenticated_user", "System"),
-        "role": st.session_state.get("current_user_role", "manager"),
-        "details": details or {},
-    }
-    st.session_state.audit_events = [entry] + list(st.session_state.get("audit_events", []))
-    LOGGER.info("%s | %s | %s | %s", event_type, entry["actor"], entry["role"], json.dumps(details or {}, default=str))
-    persist_state()
-
-
-def user_can_edit(allowed_roles=None):
-    allowed_roles = allowed_roles or {"manager", "admin"}
-    return st.session_state.get("current_user_role", "manager") in allowed_roles
-
-
-def render_recent_activity(limit=8):
-    activity = st.session_state.get("audit_events", [])[:limit]
-    if not activity:
-        st.info("No recent activity yet.")
-        return
-    st.dataframe(
-        [
-            {
-                "Time": item.get("timestamp", "").replace("T", " ")[:16],
-                "Actor": item.get("actor", "System"),
-                "Role": item.get("role", "manager"),
-                "Event": item.get("event_type", ""),
-                "Details": json.dumps(item.get("details", {}), default=str),
-            }
-            for item in activity
-        ],
-        use_container_width=True,
-        hide_index=True,
-    )
 
 
 @st.dialog("Take Photo")
@@ -1272,10 +1022,42 @@ def photo_camera_dialog():
         st.rerun()
 
 
+def install_update(uploaded_file, signature):
+    """Validate and atomically install an uploaded app upgrade after a backup."""
+    source = uploaded_file.getvalue()
+    if not source:
+        raise ValueError("The uploaded upgrade file is empty.")
+    try:
+        ast.parse(source.decode("utf-8"), filename=uploaded_file.name)
+    except (UnicodeDecodeError, SyntaxError) as error:
+        raise ValueError(f"The upgrade was rejected: {error}") from None
+    if not UPDATE_SIGNING_KEY:
+        raise ValueError("Updates are disabled until AILYN_UPDATE_SIGNING_KEY is configured.")
+    expected_signature = hmac.new(
+        UPDATE_SIGNING_KEY.encode("utf-8"), source, hashlib.sha256
+    ).hexdigest()
+    if not hmac.compare_digest(expected_signature, signature.strip()):
+        raise ValueError("The upgrade signature is invalid.")
+
+    backup_dir = os.path.join(APP_DIR, "backups")
+    os.makedirs(backup_dir, exist_ok=True)
+    backup_path = os.path.join(backup_dir, f"NELL.py.py.{int(time.time())}.bak")
+    temporary_path = None
+    try:
+        shutil.copy2(__file__, backup_path)
+        with tempfile.NamedTemporaryFile("wb", delete=False, dir=APP_DIR,
+                                         prefix=".nell-upgrade-") as temporary:
+            temporary.write(source)
+            temporary_path = temporary.name
+        os.replace(temporary_path, __file__)
+    except OSError as error:
+        if temporary_path and os.path.exists(temporary_path):
+            os.remove(temporary_path)
+        raise ValueError(f"The upgrade could not be installed: {error}") from None
+    return backup_path
+
+
 def record_budget_change(action, amount, previous_budget):
-    if not user_can_edit({"manager", "admin"}):
-        st.warning("Only managers can edit the project budget.")
-        return
     st.session_state.budget_history.append({
         "date": manila_now().strftime("%b %d, %Y %I:%M %p"),
         "action": action,
@@ -1283,7 +1065,6 @@ def record_budget_change(action, amount, previous_budget):
         "previous": float(previous_budget),
         "total": float(st.session_state.budget),
     })
-    add_audit_event("budget_changed", {"action": action, "amount": float(amount), "previous_budget": float(previous_budget), "new_budget": float(st.session_state.budget)})
     persist_state()
 
 
@@ -1465,51 +1246,25 @@ def payroll_report_dialog():
 
 
 def add_tx(name, price, qty, delivery, ttype, sender, record_date=None, details=None):
-    if not user_can_edit({"manager", "staff"}):
-        st.warning("You do not have permission to add project records.")
+    p = float(price or 0.0)
+    q = int(qty or 0)
+    d = float(delivery or 0.0)
+    if p <= 0 or q <= 0:
         return False
-    try:
-        validated = validate_transaction_input(name, price, qty, delivery, ttype)
-    except ValueError as error:
-        st.warning(str(error))
-        return False
-
-    date_value = record_date or manila_now().date()
-    date_label = date_value.strftime("%b %d, %Y") if hasattr(date_value, "strftime") else manila_now().strftime("%b %d, %Y")
-    duplicate_record = any(
-        record.get("type") == ttype
-        and record.get("name", "").upper() == validated["name"]
-        and float(record.get("amount", 0) or 0) == validated["amount"]
-        and record.get("date", "") == date_label
-        for record in st.session_state.records
-    )
-    if duplicate_record:
-        st.warning("This exact record already exists. Duplicate entries were blocked.")
-        return False
-
+    amount = (p * q) + d if ttype == "material" else p
     st.session_state.records.append({
         "id": str(time.time()),
-        "date": date_label,
-        "recorded_at": datetime.combine(date_value, datetime.min.time(), PHILIPPINES_TZ).isoformat(),
-        "name": validated["name"],
-        "price": validated["price"],
-        "qty": validated["qty"],
-        "delivery": validated["delivery"],
-        "amount": float(validated["amount"]),
+        "date": manila_now().strftime("%b %d, %Y"),
+        "recorded_at": datetime.combine(record_date or manila_now().date(), datetime.min.time(), PHILIPPINES_TZ).isoformat(),
+        "name": name.upper(),
+        "price": p,
+        "qty": q,
+        "delivery": d,
+        "amount": float(amount),
         "type": ttype,
         "sender": sender,
         **(details or {}),
     })
-    add_audit_event(
-        "transaction_added",
-        {
-            "type": ttype,
-            "name": validated["name"],
-            "amount": float(validated["amount"]),
-            "date": date_label,
-            "sender": sender,
-        },
-    )
     persist_state()
     return True
 
@@ -1526,14 +1281,8 @@ st.markdown("""
 *{box-sizing:border-box}
 html,body,[class*="css"]{font-family:'Manrope',sans-serif}
 .stApp{
-  background-color:#04180f;
-  background-image:
-    linear-gradient(135deg, rgba(3,30,18,.62), rgba(10,85,45,.54)),
-    url("https://images.unsplash.com/photo-1600585154340-be6161a56a0c");
-  background-repeat:no-repeat;
-  background-position:center center;
-  background-size:cover;
-  background-attachment:fixed;
+  background:url("https://images.unsplash.com/photo-1600585154340-be6161a56a0c") no-repeat center center fixed;
+  background-size:cover;background-position:center;
 }
 .stApp:before{
   content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
@@ -1579,6 +1328,9 @@ section[data-testid="stSidebar"]>div{padding:22px 14px 30px!important} section[d
 .sidebar-brand:after{content:"";position:absolute;inset:-80% 35%;background:rgba(255,255,255,.09);transform:rotate(25deg);animation:scan 7s linear infinite}
 .brand-row{position:relative;z-index:1;display:flex;align-items:center;gap:14px}.brand-logo{width:62px;height:62px;object-fit:contain;filter:drop-shadow(0 8px 16px rgba(0,0,0,.32));transition:.25s ease}.sidebar-brand:hover .brand-logo{transform:translateY(-4px) scale(1.06);filter:drop-shadow(0 14px 26px rgba(114,247,176,.30))}.brand-copy{min-width:0}.brand-title{font-family:'Outfit';font-size:17px;font-weight:900;letter-spacing:.06em;line-height:1.02;color:#fff!important}.brand-title span{display:block}.brand-sub{font-size:9px;color:#8ff1b4!important;letter-spacing:.16em;text-transform:uppercase;margin-top:7px;font-weight:800}
 section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h3{font-family:'Outfit';font-size:10px!important;letter-spacing:.18em;text-transform:uppercase;color:#72f7b0!important;margin:20px 5px 9px!important;display:flex;align-items:center;gap:9px} section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h3:before{content:'•';font-size:20px;line-height:0;color:#45f39a;text-shadow:0 0 12px rgba(69,243,154,.8)} section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h3:after{content:'';height:1px;flex:1;background:linear-gradient(90deg,rgba(114,247,176,.35),transparent)}section[data-testid="stSidebar"] hr{border-color:rgba(170,255,198,.10)!important;margin:10px 4px!important}.sidebar-gap{height:8px}.sidebar-live{font-size:9px;letter-spacing:.14em;color:#7feeb0!important;font-weight:800;text-align:center;margin:-4px 0 10px;text-shadow:0 0 12px rgba(114,247,176,.18)}
+.sidebar-section-label{margin:20px 6px 10px;color:#72f7b0!important;font-size:10px!important;line-height:1.3!important;letter-spacing:.18em!important;text-transform:uppercase;font-weight:900;font-family:'Outfit',sans-serif!important;display:flex;align-items:center;gap:9px}
+.sidebar-section-label:before{content:'•';font-size:20px;line-height:0;color:#45f39a;text-shadow:0 0 12px rgba(69,243,154,.8)}
+.sidebar-section-label:after{content:'';height:1px;flex:1;background:linear-gradient(90deg,rgba(114,247,176,.35),transparent)}
 section[data-testid="stSidebar"] button{min-height:52px!important;margin:7px 0!important;padding:0 16px!important;border-radius:18px!important;text-align:left!important;background:linear-gradient(145deg,rgba(18,82,48,.48),rgba(2,31,18,.42))!important;border:1px solid rgba(114,247,176,.15)!important;box-shadow:0 7px 0 rgba(1,12,7,.55),0 14px 28px rgba(0,0,0,.24),inset 0 1px 0 rgba(255,255,255,.10)!important;transition:transform .18s cubic-bezier(.2,.8,.2,1),box-shadow .18s,border-color .18s,background .18s!important;backdrop-filter:blur(14px) saturate(135%)!important;-webkit-backdrop-filter:blur(14px) saturate(135%)!important}
 section[data-testid="stSidebar"] button:hover{transform:translate3d(5px,-3px,0)!important;background:linear-gradient(145deg,rgba(28,116,67,.72),rgba(5,47,27,.56))!important;border-color:rgba(114,247,176,.58)!important;box-shadow:0 10px 0 rgba(1,12,7,.70),0 20px 36px rgba(0,0,0,.34),0 0 28px rgba(70,230,132,.16),inset 0 1px 0 rgba(255,255,255,.18)!important}
 section[data-testid="stSidebar"] button:active{transform:translate3d(2px,4px,0)!important;box-shadow:0 2px 0 rgba(1,12,7,.9),0 6px 12px rgba(0,0,0,.3)!important}
@@ -1611,8 +1363,7 @@ input,textarea{color:#fff!important;-webkit-text-fill-color:#fff!important}input
 @media(max-width:900px){.block-container{padding:18px 14px 30px!important;margin:10px!important}.headbar-card{padding:16px}.headbar-title{font-size:24px!important}.headbar-subtitle{margin-left:92px}.hero-title{font-size:32px}.donut-wrap{flex-direction:column;align-items:flex-start}.donut{width:170px;height:170px;flex-basis:170px}.donut:after{inset:42px}.schedule{align-items:flex-start;flex-wrap:wrap}.open-planner{margin-left:0}}
 @media(max-width:600px){.headbar-card{display:block}.headbar-title{font-size:21px!important;gap:10px}.headbar-title img{width:52px;height:52px}.headbar-subtitle{margin-left:62px;font-size:8px}.headbar-time{margin-top:12px;display:inline-block}.hero-row{align-items:flex-start}.hero-logo{width:60px;height:60px}.hero-title{font-size:25px}.hero-sub{font-size:9px;letter-spacing:.14em}.dash-section{padding:16px}.tx-row{gap:8px}.tx-right{font-size:11px}.open-planner{width:100%;text-align:center}.sidebar-brand{padding:14px}}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important}}
-
-    /* UHD 4K rendering helpers */
+/* UHD 4K rendering helpers */
 img{image-rendering:auto;-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision}
 html,body,[class*="css"],button,input,textarea,select{ -webkit-font-smoothing:antialiased!important; -moz-osx-font-smoothing:grayscale!important; text-rendering:geometricPrecision!important; }
 .stApp,.block-container,section[data-testid="stSidebar"],section[data-testid="stSidebar"] *{ text-rendering:geometricPrecision!important; }
@@ -1988,58 +1739,81 @@ with st.sidebar:
         unsafe_allow_html=True
     )
 
-    st.subheader("Executive Overview")
-    if st.button("📊   Dashboard   ›", use_container_width=True, key="side_dashboard"):
+    st.markdown(
+        "<div class='photo-scanner-title'>PHOTO SCANNER</div>"
+        "<div class='photo-scanner-subtitle'>Capture receipts and project progress</div>",
+        unsafe_allow_html=True,
+    )
+    if st.button("📷 TAKE PHOTO", use_container_width=True, key="take_photo_sidebar"):
+        set_view("photo_scanner")
+
+    if st.button("📝 NOTES", use_container_width=True, key="sidebar_notes_popup"):
+        notes_dialog()
+
+    st.markdown("<div class='sidebar-section-label'>PROJECT OVERVIEW</div>", unsafe_allow_html=True)
+    if st.button("📊 DASHBOARD", use_container_width=True, key="side_dashboard"):
         set_view("home")
 
-    st.markdown("<div class='sidebar-budget-card'><div class='budget-title'>Budget Control</div></div>",
+    st.markdown("<div class='sidebar-budget-card'><div class='budget-title'>BUDGET CONTROL</div></div>",
                 unsafe_allow_html=True)
-    if st.button("💰   Apply Budget", use_container_width=True, key="side_budget"):
+    if st.button("💰 APPLY BUDGET", use_container_width=True, key="side_budget"):
         budget_dialog()
 
-    if st.button("🔄   Restart System   ›", use_container_width=True, key="side_restart"):
+    if st.button("🔄 RESET SYSTEM", use_container_width=True, key="side_restart"):
         clear_all()
         set_view("home")
 
-    with st.expander("Project Details", expanded=False):
+    with st.expander("PROJECT DETAILS", expanded=False):
         project = st.session_state.project
-        st.caption(f"{project.get('status', 'Active')} project")
+        st.caption(f"Status: {project.get('status', 'Active')}")
         if st.button("EDIT PROJECT DETAILS", use_container_width=True, key="side_project_details"):
             project_settings_dialog()
 
-    st.subheader("Project Control")
-    if st.button("📝   New Work Entry   ›", use_container_width=True, key="side_new_work"):
+    st.markdown("<div class='sidebar-section-label'>PROJECT CONTROL</div>", unsafe_allow_html=True)
+    if st.button("📝 NEW WORK ENTRY", use_container_width=True, key="side_new_work"):
         set_view("planner_input")
-    if st.button("📅   Schedule & Progress   ›", use_container_width=True, key="side_schedule"):
+    if st.button("📅 SCHEDULE & PROGRESS", use_container_width=True, key="side_schedule"):
         set_view("planner_output")
+    if st.button("🧰 PROJECT TOOLS", use_container_width=True, key="side_project_tools"):
+        set_view("project_tools")
+    if st.button("⚙️ SETTINGS", use_container_width=True, key="side_settings"):
+        settings_dialog()
+    if st.button("💬 MESSAGES & CALLS", use_container_width=True, key="side_messages"):
+        set_view("communications")
+    if st.button("👤 CLIENT PORTAL", use_container_width=True, key="side_client_portal"):
+        set_view("client_portal")
 
-    st.subheader("Financial Operations")
-    if st.button("🧱   Material Entry   ›", use_container_width=True, key="side_material"):
+    st.markdown("<div class='sidebar-section-label'>FINANCIAL OPERATIONS</div>", unsafe_allow_html=True)
+    if st.button("🧱 MATERIAL ENTRY", use_container_width=True, key="side_material"):
         set_view("material")
-    if st.button("🧾   Expense Entry   ›", use_container_width=True, key="side_expense"):
+    if st.button("🧾 EXPENSE ENTRY", use_container_width=True, key="side_expense"):
         set_view("expense")
-    if st.button("🏦   Encash Deposit   ›", use_container_width=True, key="side_excess"):
+    if st.button("🏦 CASH & DEPOSITS", use_container_width=True, key="side_excess"):
         set_view("excess")
-    if st.button("📒   Financial Ledger   ›", use_container_width=True, key="side_ledger"):
+    if st.button("📒 FINANCIAL LEDGER", use_container_width=True, key="side_ledger"):
         set_view("ledger")
-    if st.button("📈   Financial Report   ›", use_container_width=True, key="side_financial_report"):
+    if st.button("📈 FINANCIAL REPORT", use_container_width=True, key="side_financial_report"):
         set_view("export")
 
-    st.subheader("Payroll Operations")
-    if st.button("📊   Payroll Dashboard   ›", use_container_width=True, key="side_payroll_dashboard"):
+    st.markdown("<div class='sidebar-section-label'>PAYROLL OPERATIONS</div>", unsafe_allow_html=True)
+    if st.button("📊 PAYROLL DASHBOARD", use_container_width=True, key="side_payroll_dashboard"):
         set_view("payroll_dashboard")
-    if st.button("👷   Labor Account   ›", use_container_width=True, key="side_labor"):
+    if st.button("👷 LABOR ACCOUNT", use_container_width=True, key="side_labor"):
         set_view("add_labor")
-    if st.button("💳   Payroll Expense   ›", use_container_width=True, key="side_payroll_expense"):
+    if st.button("💳 PAYROLL EXPENSE", use_container_width=True, key="side_payroll_expense"):
         set_view("add_payroll_expense")
-    if st.button("🪙   Account Remainder   ›", use_container_width=True, key="side_payroll_remaining"):
+    if st.button("🪙 REMAINING MONEY", use_container_width=True, key="side_payroll_remaining"):
         set_view("payroll_remaining")
-    if st.button("👥   Labor Accounts   ›", use_container_width=True, key="side_payroll_ledger"):
+    if st.button("👥 LABOR ACCOUNTS", use_container_width=True, key="side_payroll_ledger"):
         set_view("payroll_ledger")
-    if st.button("📋   Payroll Report   ›", use_container_width=True, key="side_payroll_report"):
+    if st.button("📋 PAYROLL REPORT", use_container_width=True, key="side_payroll_report"):
         set_view("payroll_export")
-    if st.button("🗃️   Receipts Archive   ›", use_container_width=True, key="side_archive"):
+    if st.button("🗃️ RECEIPTS ARCHIVE", use_container_width=True, key="side_archive"):
         set_view("receipt_archive")
+
+    st.markdown("<div class='sidebar-section-label'>ADMINISTRATION</div>", unsafe_allow_html=True)
+    if st.button("🔐 ADMIN CONSOLE", use_container_width=True, key="side_admin"):
+        set_view("update")
 
 view = st.session_state.view
 
@@ -2079,82 +1853,26 @@ if view == "home":
         if task.get("date_obj", "") < manila_now().strftime("%Y-%m-%d")
         and task.get("status") != "Completed"
     ]
-    budget_alert = budget_alert_status(budget, used)
-    if budget_alert["severity"] == "danger":
-        st.error(budget_alert["message"])
-    elif budget_alert["severity"] == "warning":
-        st.warning(budget_alert["message"])
-    elif budget_alert["severity"] == "info":
-        st.info(budget_alert["message"])
+    if balance < 0:
+        st.error(f"Budget warning: project is over budget by PHP {abs(balance):,.2f}.")
     if overdue_tasks:
         st.warning(f"{len(overdue_tasks)} scheduled task(s) are overdue.")
 
-    monthly_summary = get_monthly_summary()
-    current_month_name = datetime.strptime(monthly_summary["month"], "%Y-%m").strftime("%b %Y")
-    previous_month_name = datetime.strptime(monthly_summary["previous_month"], "%Y-%m").strftime("%b %Y")
-
-    budget_alert = budget_alert_status(budget, used)
-    if budget_alert["severity"] == "danger":
-        st.error(budget_alert["message"])
-    elif budget_alert["severity"] == "warning":
-        st.warning(budget_alert["message"])
-    elif budget_alert["severity"] == "info":
-        st.info(budget_alert["message"])
-
-    if monthly_summary["delta_from_previous"] > 0:
-        st.info(f"This month is PHP {monthly_summary['delta_from_previous']:,.2f} higher than {previous_month_name}.")
-    elif monthly_summary["delta_from_previous"] < 0:
-        st.success(f"This month is PHP {abs(monthly_summary['delta_from_previous']):,.2f} lower than {previous_month_name}.")
-
-    if overdue_tasks:
-        st.warning(f"{len(overdue_tasks)} scheduled task(s) are overdue.")
-
-    summary_col1, summary_col2, summary_col3, summary_col4, summary_col5 = st.columns(5)
-    with summary_col1:
+    m1, m2, m3, m4 = st.columns(4)
+    with m1:
         st.metric("TOTAL BUDGET", f"₱{budget:,.2f}")
-    with summary_col2:
+    with m2:
         st.metric("TOTAL EXPENSES", f"₱{used:,.2f}")
-    with summary_col3:
+    with m3:
         st.metric("REMAINING BALANCE", f"₱{balance:,.2f}")
-    with summary_col4:
-        st.metric(f"MONTH SPENT ({manila_now().strftime('%b %Y').upper()})", f"₱{monthly_construction_spend():,.2f}")
-    with summary_col5:
-        st.metric("UPCOMING TASKS", f"{len(upcoming_tasks)}")
-
-    action_col1, action_col2, action_col3, action_col4 = st.columns(4)
-    with action_col1:
-        if st.button("OPEN PLANNER", use_container_width=True):
-            set_view("planner_output")
-    with action_col2:
-        if st.button("ADD MATERIAL", use_container_width=True):
-            set_view("material")
-    with action_col3:
-        if st.button("VIEW LEDGER", use_container_width=True):
-            set_view("ledger")
-    with action_col4:
-        if st.button("PAYROLL DASHBOARD", use_container_width=True):
-            set_view("payroll_dashboard")
+    with m4:
+        st.metric(
+            f"PROJECT SPENT THIS MONTH ({manila_now().strftime('%b %Y').upper()})",
+            f"₱{monthly_construction_spend():,.2f}",
+        )
 
     st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
-
-    st.markdown(f"""
-    <div class="dash-section">
-      <div class="section-head">
-        <div class="section-title" style="margin:0">CENTRALIZED PROJECT OVERVIEW</div>
-        <span style="font-size:11px;color:#7b867f;font-weight:700">{project.get('status', 'Active').upper()} • {project.get('client') or 'No client assigned'}</span>
-      </div>
-      <div class="legend">
-        <div class="legend-row"><span><i class="dot" style="background:#075c28"></i>Project</span><b>{project.get('name', 'Ailyn House Project')}</b></div>
-        <div class="legend-row"><span><i class="dot" style="background:#e0aa25"></i>Site</span><b>{project.get('address') or 'Not set'}</b></div>
-        <div class="legend-row"><span><i class="dot" style="background:#a78bfa"></i>Manager</span><b>{project.get('manager') or 'Not set'}</b></div>
-        <div class="legend-row"><span><i class="dot" style="background:#f26d6d"></i>Target</span><b>{project.get('target_date') or 'Not set'}</b></div>
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
-
-    left, center, right = st.columns([1.2, 1.1, 1.1])
+    left, right = st.columns([1.05, 1])
     with left:
         st.markdown(f"""
         <div class="dash-section">
@@ -2166,37 +1884,9 @@ if view == "home":
               <div class="legend-row"><span><i class="dot" style="background:#e0aa25"></i>Expenses</span><b>₱{expenses:,.2f}</b></div>
               <div class="legend-row"><span><i class="dot" style="background:#e85d4a"></i>Excess</span><b>₱{excess:,.2f}</b></div>
             </div>
-          </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with center:
-        trend_rows = monthly_trend_summary(st.session_state.records, st.session_state.labor_records, st.session_state.payroll_expenses, months=6)
-        st.markdown("""
-        <div class="dash-section">
-          <div class="section-head">
-            <div class="section-title" style="margin:0">MONTHLY TREND</div>
-            <span style="font-size:11px;color:#7b867f;font-weight:700">LAST 6 MONTHS</span>
-          </div>
-        </div>
-        """, unsafe_allow_html=True)
-        if trend_rows:
-            st.dataframe(
-                trend_rows,
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "Month": st.column_config.TextColumn("Month"),
-                    "Materials": st.column_config.NumberColumn("Materials", format="₱%.2f"),
-                    "Construction": st.column_config.NumberColumn("Construction", format="₱%.2f"),
-                    "Labor": st.column_config.NumberColumn("Labor", format="₱%.2f"),
-                    "Payroll": st.column_config.NumberColumn("Payroll", format="₱%.2f"),
-                    "Total": st.column_config.NumberColumn("Total", format="₱%.2f"),
-                },
-            )
-        else:
-            st.info("No monthly activity yet.")
-
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
     with right:
         tx = list(reversed(st.session_state.records))[:5]
         tx_html = ""
@@ -2211,46 +1901,19 @@ if view == "home":
             unsafe_allow_html=True)
 
     st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
-
     st.markdown(f"""
     <div class="dash-section">
-      <div class="section-head"><div class="section-title" style="margin:0">MONTHLY OVERVIEW</div><span style="font-size:11px;color:#7b867f;font-weight:700">{current_month_name}</span></div>
-      <div class="legend">
-        <div class="legend-row"><span><i class="dot" style="background:#075c28"></i>Materials</span><b>₱{monthly_summary['materials']:,.2f}</b></div>
-        <div class="legend-row"><span><i class="dot" style="background:#e0aa25"></i>Construction</span><b>₱{monthly_summary['construction']:,.2f}</b></div>
-        <div class="legend-row"><span><i class="dot" style="background:#a78bfa"></i>Labor</span><b>₱{monthly_summary['labor']:,.2f}</b></div>
-        <div class="legend-row"><span><i class="dot" style="background:#f26d6d"></i>Payroll</span><b>₱{monthly_summary['payroll']:,.2f}</b></div>
-        <div class="legend-row"><span><i class="dot" style="background:#4ade80"></i>Remaining</span><b>₱{monthly_summary['remaining']:,.2f}</b></div>
+      <div class="schedule">
+        <div class="schedule-icon">▦</div>
+        <div><div class="schedule-title">TODAY'S SCHEDULE</div><div style="font-weight:800;font-size:13px;margin-top:4px">{manila_now().strftime('%B %d, %Y (%A)')}</div><div class="schedule-muted">{len(today_tasks)} task(s) scheduled for today.</div></div>
+        <div style="width:1px;height:58px;background:#dfe8e1;margin:0 12px"></div>
+        <div><div class="schedule-title">UPCOMING TASKS</div><div style="font-weight:800;font-size:13px;margin-top:4px">{len(upcoming_tasks)} task(s) planned</div><div class="schedule-muted">Stay on track and manage your construction tasks.</div></div>
+        <div style="margin-left:auto"><div class="open-planner">▣ &nbsp; Open Planner</div></div>
       </div>
     </div>
     """, unsafe_allow_html=True)
-
-    st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
-
-    left, right = st.columns([1.3, 1])
-    with left:
-        st.markdown(f"""
-        <div class="dash-section">
-          <div class="schedule">
-            <div class="schedule-icon">▦</div>
-            <div><div class="schedule-title">TODAY'S SCHEDULE</div><div style="font-weight:800;font-size:13px;margin-top:4px">{manila_now().strftime('%B %d, %Y (%A)')}</div><div class="schedule-muted">{len(today_tasks)} task(s) scheduled for today.</div></div>
-            <div style="width:1px;height:58px;background:#dfe8e1;margin:0 12px"></div>
-            <div><div class="schedule-title">UPCOMING TASKS</div><div style="font-weight:800;font-size:13px;margin-top:4px">{len(upcoming_tasks)} task(s) planned</div><div class="schedule-muted">Stay on track and manage your construction tasks.</div></div>
-            <div style="margin-left:auto"><div class="open-planner">▣ &nbsp; Open Planner</div></div>
-          </div>
-        </div>
-        """, unsafe_allow_html=True)
-    with right:
-        st.markdown(f"""
-        <div class="dash-section">
-          <div class="section-head"><div class="section-title" style="margin:0">TASK SUMMARY</div><span style="font-size:11px;color:#7b867f;font-weight:700">LIVE STATUS</span></div>
-          <div class="legend">
-            <div class="legend-row"><span><i class="dot" style="background:#075c28"></i>Today's tasks</span><b>{len(today_tasks)}</b></div>
-            <div class="legend-row"><span><i class="dot" style="background:#e0aa25"></i>Upcoming</span><b>{len(upcoming_tasks)}</b></div>
-            <div class="legend-row"><span><i class="dot" style="background:#e85d4a"></i>Overdue</span><b>{len(overdue_tasks)}</b></div>
-          </div>
-        </div>
-        """, unsafe_allow_html=True)
+    if st.button("OPEN CONSTRUCTION PLANNER", use_container_width=True):
+        set_view("planner_output")
 
 elif view == "payroll_dashboard":
     payroll_labor = sum(float(record.get("net", 0)) for record in st.session_state.labor_records)
@@ -2317,589 +1980,129 @@ elif view == "payroll_dashboard":
 
 elif view == "planner_input":
     st.subheader("📅 PLANNER INPUT - ADD NEW WORK TASK")
-    st.caption("Select the exact day from the monthly calendar, then enter the work details.")
-
-    # ================================================================
-    # ACCURATE MONTHLY CALENDAR
-    # Uses Python's calendar.monthrange/monthcalendar with Sunday as
-    # the first column. Every cell is a real date in the displayed month.
-    # ================================================================
-    import calendar as _calendar
-    from datetime import date as _date, timedelta as _timedelta
-
-    if "planner_calendar_year" not in st.session_state or "planner_calendar_month_num" not in st.session_state:
-        _today = manila_now().date()
-        st.session_state.planner_calendar_year = _today.year
-        st.session_state.planner_calendar_month_num = _today.month
-
-    if "planner_selected_date" not in st.session_state:
-        st.session_state.planner_selected_date = manila_now().date()
-
-    cal_year = int(st.session_state.planner_calendar_year)
-    cal_month = int(st.session_state.planner_calendar_month_num)
-
-    # Existing saved task dates
-    task_dates = {}
-    for task in st.session_state.get("planner_tasks", []):
-        try:
-            task_date = _date.fromisoformat(str(task.get("date_obj", "")))
-            task_dates.setdefault(task_date, []).append(task)
-        except (TypeError, ValueError):
-            pass
-
-    # ------------------------------------------------
-    # Month navigation — arithmetic is date-safe.
-    # ------------------------------------------------
-    nav_prev, nav_title, nav_next = st.columns([1, 6, 1])
-
-    with nav_prev:
-        if st.button("‹", key="planner_prev_month", use_container_width=True):
-            if cal_month == 1:
-                cal_year -= 1
-                cal_month = 12
-            else:
-                cal_month -= 1
-            st.session_state.planner_calendar_year = cal_year
-            st.session_state.planner_calendar_month_num = cal_month
-            st.rerun()
-
-    with nav_title:
-        st.markdown(
-            f"<div class='planner-month-title'>{_calendar.month_name[cal_month]} {cal_year}</div>",
-            unsafe_allow_html=True,
-        )
-
-    with nav_next:
-        if st.button("›", key="planner_next_month", use_container_width=True):
-            if cal_month == 12:
-                cal_year += 1
-                cal_month = 1
-            else:
-                cal_month += 1
-            st.session_state.planner_calendar_year = cal_year
-            st.session_state.planner_calendar_month_num = cal_month
-            st.rerun()
-
-    today = manila_now().date()
-
-    if st.button("TODAY", key="planner_today", use_container_width=True):
-        st.session_state.planner_calendar_year = today.year
-        st.session_state.planner_calendar_month_num = today.month
-        st.session_state.planner_selected_date = today
-        st.rerun()
-
-    # Normalize selected date so stale session-state values cannot create
-    # an invalid calendar selection.
-    try:
-        selected_date = st.session_state.planner_selected_date
-        if not isinstance(selected_date, _date):
-            selected_date = _date.fromisoformat(str(selected_date))
-    except (TypeError, ValueError):
-        selected_date = today
-        st.session_state.planner_selected_date = today
-
-    st.markdown(
-        f"<div class='planner-selected-info'>"
-        f"📅 SELECTED DATE: {selected_date.strftime('%A, %B %d, %Y')}"
-        f"</div>",
-        unsafe_allow_html=True,
-    )
-
-    # Calendar layout.
-    # Calendar(..., firstweekday=SUNDAY) returns complete Sunday-first weeks.
-    sunday_first_calendar = _calendar.Calendar(firstweekday=_calendar.SUNDAY)
-    month_weeks = sunday_first_calendar.monthdayscalendar(cal_year, cal_month)
-
-    # Integrity checks prevent silent off-by-one errors.
-    expected_days = _calendar.monthrange(cal_year, cal_month)[1]
-    rendered_days = [d for week in month_weeks for d in week if d]
-    if rendered_days != list(range(1, expected_days + 1)):
-        raise RuntimeError(
-            f"Planner calendar error for {cal_year}-{cal_month:02d}: "
-            f"rendered days do not match 1..{expected_days}."
-        )
-    if any(len(week) != 7 for week in month_weeks):
-        raise RuntimeError(
-            f"Planner calendar error for {cal_year}-{cal_month:02d}: "
-            "a calendar week does not contain exactly 7 columns."
-        )
-
-    st.markdown("""
-    <style>
-    .planner-calendar-wrap {
-        border: 1px solid rgba(163,255,194,.16);
-        border-radius: 16px;
-        overflow: hidden;
-        background: rgba(5,29,17,.55);
-        margin-bottom: 16px;
-    }
-    .planner-week-header {
-        display: grid;
-        grid-template-columns: repeat(7, minmax(0, 1fr));
-        background: rgba(114,247,176,.08);
-        border-bottom: 1px solid rgba(163,255,194,.12);
-    }
-    .planner-week-header div {
-        text-align: center;
-        padding: 10px 2px;
-        font-size: 10px;
-        font-weight: 900;
-        color: #a8dcb8;
-    }
-    .planner-empty-cell {
-        height: 66px;
-    }
-    .planner-day-cell {
-        min-height: 66px;
-        padding: 3px;
-    }
-    .planner-day-number {
-        font-size: 15px;
-        font-weight: 900;
-        line-height: 1;
-    }
-    .planner-day-dot {
-        font-size: 13px;
-        line-height: 1;
-        color: #72f7b0;
-    }
-    @media(max-width:600px) {
-        .planner-week-header div {
-            font-size: 8px;
-            padding: 8px 1px;
-        }
-        .planner-empty-cell,
-        .planner-day-cell {
-            min-height: 54px;
-            height: 54px;
-        }
-        .planner-day-number {
-            font-size: 13px;
-        }
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-    # Header is separate from the date buttons so the actual date grid
-    # always has exactly seven columns.
-    st.markdown(
-        "<div class='planner-calendar-wrap'>"
-        "<div class='planner-week-header'>"
-        "<div>SUN</div><div>MON</div><div>TUE</div><div>WED</div>"
-        "<div>THU</div><div>FRI</div><div>SAT</div>"
-        "</div></div>",
-        unsafe_allow_html=True,
-    )
-
-    # IMPORTANT: do not use a flat list of dates here.
-    # Render each real calendar week as exactly seven Streamlit columns.
-    for week_idx, week in enumerate(month_weeks):
-        cols = st.columns(7, gap="small")
-
-        for weekday_idx, day_num in enumerate(week):
-            with cols[weekday_idx]:
-                if day_num == 0:
-                    st.markdown(
-                        "<div class='planner-empty-cell'></div>",
-                        unsafe_allow_html=True,
-                    )
-                    continue
-
-                cell_date = _date(cal_year, cal_month, day_num)
-                is_selected = cell_date == selected_date
-                is_today = cell_date == today
-                has_task = cell_date in task_dates
-
-                # Keep the button label simple and deterministic.
-                if is_today and has_task:
-                    label = f"🟢 {day_num}\n•"
-                elif is_today:
-                    label = f"🟢 {day_num}"
-                elif has_task:
-                    label = f"{day_num}\n•"
-                else:
-                    label = str(day_num)
-
-                if st.button(
-                    label,
-                    key=f"planner_calendar_{cal_year}_{cal_month}_{week_idx}_{weekday_idx}_{day_num}",
-                    use_container_width=True,
-                ):
-                    st.session_state.planner_selected_date = cell_date
-                    st.rerun()
-
-    # Show the selected day and any existing tasks on that day.
-    selected_tasks = task_dates.get(selected_date, [])
-    if selected_tasks:
-        st.markdown("#### 📌 TASKS ALREADY SCHEDULED FOR THIS DATE")
-        for task in selected_tasks:
-            st.info(
-                f"{task.get('name', 'WORK TASK')} — "
-                f"{task.get('phase', 'Phase')} — "
-                f"{task.get('status', 'Not Started')}"
-            )
-
+    st.caption("Select date details, work description, and optional photo proofs.")
     with st.form(key="planner_input_form", clear_on_submit=True):
-        work_description = st.text_area(
-            "Work Description / Task Details",
-            placeholder="Describe construction work..."
-        )
-        phase = st.selectbox(
-            "Construction Phase",
-            [
-                "Site Prep",
-                "Foundation",
-                "Framing & Masonry",
-                "Roofing",
-                "Plumbing & Electrical",
-                "Finishing",
-                "Inspection",
-            ],
-        )
-        uploaded_files = st.file_uploader(
-            "Upload Work Proof Photos (Optional)",
-            type=["jpg", "jpeg", "png"],
-            accept_multiple_files=True,
-        )
-        submitted = st.form_submit_button(
-            "💾 SAVE TASK TO PERMANENT STORAGE"
-        )
+        selected_date = st.date_input("Select Day, Month, and Year", value=manila_now().date())
+        work_description = st.text_area("Work Description / Task Details", placeholder="Describe construction work...")
+        phase = st.selectbox("Construction Phase",
+                             ["Site Prep", "Foundation", "Framing & Masonry", "Roofing", "Plumbing & Electrical",
+                              "Finishing", "Inspection"])
+        uploaded_files = st.file_uploader("Upload Work Proof Photos (Optional)", type=["jpg", "jpeg", "png"],
+                                          accept_multiple_files=True)
+        submitted = st.form_submit_button("💾 SAVE TASK TO PERMANENT STORAGE")
 
         if submitted:
             if work_description.strip():
                 photos_base64 = []
-
                 if uploaded_files:
                     for file in uploaded_files:
                         bytes_data = file.read()
-                        b64_str = base64.b64encode(bytes_data).decode("utf-8")
+                        b64_str = base64.b64encode(bytes_data).decode('utf-8')
                         mime_type = file.type or "image/png"
-                        photos_base64.append(
-                            f"data:{mime_type};base64,{b64_str}"
-                        )
-
-                # Save the exact selected calendar date.
+                        photos_base64.append(f"data:{mime_type};base64,{b64_str}")
                 st.session_state.planner_tasks.append({
                     "id": str(time.time()),
                     "day": selected_date.strftime("%d"),
                     "month": selected_date.strftime("%B"),
                     "year": selected_date.strftime("%Y"),
-                    "date_obj": selected_date.isoformat(),
+                    "date_obj": selected_date.strftime("%Y-%m-%d"),
                     "name": work_description.upper(),
                     "phase": phase,
                     "status": "Not Started",
-                    "photos": photos_base64,
+                    "photos": photos_base64
                 })
-
                 persist_state()
-                st.success(
-                    f"Task saved for {selected_date.strftime('%A, %B %d, %Y')}!"
-                )
+                st.success("Task & photos permanently saved!")
                 st.rerun()
             else:
                 st.warning("Please fill in the work description.")
-
     st.divider()
     if st.button("🏠 RETURN TO HOME", use_container_width=True):
         set_view("home")
 
-
 elif view == "planner_output":
-    st.subheader("📆 PLANNER OUTPUT - FULL MONTH CALENDAR")
-    st.caption("Full monthly project calendar with scheduled work tasks. Download it as a PNG image.")
-
-    import calendar as _calendar
-    from datetime import date as _date
-
-    # Use the same exact Sunday-first Gregorian calculation as Planner Input.
-    if "planner_output_year" not in st.session_state or "planner_output_month" not in st.session_state:
-        _today = manila_now().date()
-        st.session_state.planner_output_year = _today.year
-        st.session_state.planner_output_month = _today.month
-
-    output_year = int(st.session_state.planner_output_year)
-    output_month = int(st.session_state.planner_output_month)
-
-    nav_prev, nav_title, nav_next = st.columns([1, 6, 1])
-    with nav_prev:
-        if st.button("‹", key="planner_output_prev_month", use_container_width=True):
-            if output_month == 1:
-                output_year -= 1
-                output_month = 12
-            else:
-                output_month -= 1
-            st.session_state.planner_output_year = output_year
-            st.session_state.planner_output_month = output_month
-            st.rerun()
-
-    with nav_title:
-        st.markdown(
-            f"<div class='planner-month-title'>{_calendar.month_name[output_month]} {output_year}</div>",
-            unsafe_allow_html=True,
-        )
-
-    with nav_next:
-        if st.button("›", key="planner_output_next_month", use_container_width=True):
-            if output_month == 12:
-                output_year += 1
-                output_month = 1
-            else:
-                output_month += 1
-            st.session_state.planner_output_year = output_year
-            st.session_state.planner_output_month = output_month
-            st.rerun()
-
-    if st.button("TODAY", key="planner_output_today", use_container_width=True):
-        today = manila_now().date()
-        st.session_state.planner_output_year = today.year
-        st.session_state.planner_output_month = today.month
-        st.rerun()
-
-    output_calendar = _calendar.Calendar(
-        firstweekday=_calendar.SUNDAY
-    ).monthdayscalendar(output_year, output_month)
-
-    # Build task lookup using the exact stored ISO date.
-    output_tasks = {}
-    for task in st.session_state.get("planner_tasks", []):
-        try:
-            task_date = _date.fromisoformat(str(task.get("date_obj", "")))
-            output_tasks.setdefault(task_date, []).append(task)
-        except (TypeError, ValueError):
-            continue
-
-    # ---------------------------------------------------------------
-    # Full calendar HTML used for BOTH on-screen display and PNG export.
-    # This avoids downloading only the visible Streamlit widgets.
-    # ---------------------------------------------------------------
-    import html as _html
-
-    today = manila_now().date()
-    month_name = _calendar.month_name[output_month]
-
-    rows_html = ""
-    for week in output_calendar:
-        rows_html += "<tr>"
-        for day_num in week:
-            if day_num == 0:
-                rows_html += "<td class='empty'></td>"
-                continue
-
-            cell_date = _date(output_year, output_month, day_num)
-            tasks = output_tasks.get(cell_date, [])
-            is_today = cell_date == today
-
-            task_html = ""
-            for task in tasks:
-                status = task.get("status", "Not Started")
-                phase = task.get("phase", "")
-                name = _html.escape(str(task.get("name", "WORK TASK")))
-                phase = _html.escape(str(phase))
-                status = _html.escape(str(status))
-
-                task_html += (
-                    f"<div class='task'>"
-                    f"<b>{name}</b>"
-                    f"<span>{phase}</span>"
-                    f"<small>{status}</small>"
-                    f"</div>"
-                )
-
-            today_class = " today" if is_today else ""
-            rows_html += (
-                f"<td class='day{today_class}'>"
-                f"<div class='day-number'>{day_num}</div>"
-                f"{task_html}"
-                f"</td>"
-            )
-        rows_html += "</tr>"
-
-    full_calendar_html = f"""
-    <div id="planner-export-calendar" class="export-calendar">
-      <div class="export-header">
-        <div class="export-brand">PROJECT WORK PLANNER</div>
-        <div class="export-title">{_html.escape(month_name)} {output_year}</div>
-        <div class="export-subtitle">FULL MONTH WORK SCHEDULE</div>
-      </div>
-      <table>
-        <thead>
-          <tr>
-            <th>SUNDAY</th>
-            <th>MONDAY</th>
-            <th>TUESDAY</th>
-            <th>WEDNESDAY</th>
-            <th>THURSDAY</th>
-            <th>FRIDAY</th>
-            <th>SATURDAY</th>
-          </tr>
-        </thead>
-        <tbody>{rows_html}</tbody>
-      </table>
-      <div class="export-footer">
-        Generated {today.strftime("%B %d, %Y")} • Scheduled tasks: {sum(len(v) for v in output_tasks.values())}
-      </div>
-    </div>
-    """
-
-    st.markdown("""
-    <style>
-    .export-calendar {
-        width: 100%;
-        box-sizing: border-box;
-        background: #071b11;
-        color: #effff3;
-        border: 1px solid #28543b;
-        border-radius: 18px;
-        overflow: hidden;
-        font-family: Arial, Helvetica, sans-serif;
-    }
-    .export-header {
-        padding: 22px 24px 18px;
-        text-align: center;
-        border-bottom: 1px solid #28543b;
-    }
-    .export-brand {
-        font-size: 12px;
-        font-weight: 900;
-        letter-spacing: .16em;
-        color: #72f7b0;
-    }
-    .export-title {
-        font-size: 30px;
-        font-weight: 900;
-        margin-top: 5px;
-    }
-    .export-subtitle {
-        font-size: 11px;
-        letter-spacing: .12em;
-        color: #9bc8a9;
-        margin-top: 4px;
-    }
-    .export-calendar table {
-        width: 100%;
-        border-collapse: collapse;
-        table-layout: fixed;
-    }
-    .export-calendar th {
-        height: 38px;
-        padding: 5px;
-        text-align: center;
-        font-size: 10px;
-        letter-spacing: .08em;
-        color: #9bc8a9;
-        background: #0c2718;
-        border: 1px solid #28543b;
-    }
-    .export-calendar td {
-        vertical-align: top;
-        border: 1px solid #28543b;
-    }
-    .export-calendar td.day {
-        height: 115px;
-        padding: 7px;
-        background: #071b11;
-    }
-    .export-calendar td.empty {
-        height: 115px;
-        background: #04120b;
-    }
-    .day-number {
-        font-size: 17px;
-        font-weight: 900;
-        margin-bottom: 6px;
-    }
-    .today .day-number {
-        display: inline-block;
-        padding: 4px 8px;
-        border-radius: 999px;
-        background: #72f7b0;
-        color: #06150c;
-    }
-    .task {
-        margin-top: 5px;
-        padding: 6px;
-        border-left: 3px solid #72f7b0;
-        background: #0d2b1b;
-        border-radius: 5px;
-        overflow: hidden;
-    }
-    .task b {
-        display: block;
-        font-size: 10px;
-        line-height: 1.2;
-    }
-    .task span,
-    .task small {
-        display: block;
-        margin-top: 2px;
-        font-size: 8px;
-        color: #a9cbb3;
-    }
-    .export-footer {
-        padding: 10px 16px;
-        font-size: 9px;
-        color: #83a78e;
-        text-align: right;
-        border-top: 1px solid #28543b;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-    st.components.v1.html(
-        f"""
-        <!doctype html>
-        <html>
-        <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1">
-          <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-        </head>
-        <body style="margin:0;background:transparent;">
-          {full_calendar_html}
-          <div style="padding:12px 0;text-align:center;">
-            <button id="downloadPlannerCalendar"
-              style="border:0;border-radius:10px;padding:11px 18px;
-                     font-weight:900;cursor:pointer;background:#72f7b0;color:#06150c;">
-              ⬇ DOWNLOAD FULL CALENDAR IMAGE
-            </button>
-          </div>
-          <script>
-            document.getElementById("downloadPlannerCalendar").addEventListener("click", async function () {{
-              const calendar = document.getElementById("planner-export-calendar");
-              const canvas = await html2canvas(calendar, {{
-                scale: 2,
-                useCORS: true,
-                backgroundColor: "#071b11",
-                logging: false
-              }});
-              const link = document.createElement("a");
-              link.download = "planner-calendar-{output_year}-{output_month:02d}.png";
-              link.href = canvas.toDataURL("image/png");
-              link.click();
-            }});
-          </script>
-        </body>
-        </html>
-        """,
-        height=760,
-        scrolling=False,
-    )
-
-    st.markdown("### 📋 SCHEDULED TASKS")
-    if output_tasks:
-        visible = []
-        for task_date in sorted(output_tasks):
-            for task in output_tasks[task_date]:
-                visible.append({
-                    "Date": task_date.strftime("%B %d, %Y"),
-                    "Work": task.get("name", ""),
-                    "Phase": task.get("phase", ""),
-                    "Status": task.get("status", "Not Started"),
-                })
-        st.dataframe(visible, use_container_width=True, hide_index=True)
+    st.subheader("📋 PLANNER OUTPUT - WORK SCHEDULE CALENDAR")
+    tasks = st.session_state.planner_tasks
+    if not tasks:
+        st.info("No work scheduled yet.")
     else:
-        st.info("No scheduled tasks yet.")
+        sorted_tasks = sorted(tasks, key=lambda x: x.get('date_obj', ''))
+        cards_html = '<div class="cal-grid">'
+        for t in sorted_tasks:
+            badge_class = "badge-completed" if t['status'] == "Completed" else "badge-inprogress" if t[
+                                                                                                         'status'] == "In Progress" else "badge-notstarted"
+            photos_thumbs = ""
+            if t.get("photos"):
+                photos_thumbs = '<div class="card-photos">'
+                for p in t["photos"]:
+                    photos_thumbs += f'<img src="{p}" class="card-photo-thumb" />'
+                photos_thumbs += '</div>'
+            cards_html += f"""
+            <div class="cal-card">
+              <div class="cal-date-badge">📅 {t.get("month", "")} {t.get("day", "")}, {t.get("year", "")}</div>
+              <div class="cal-task-title">{t["name"]}</div>
+              <div class="cal-phase">🛠️ Phase: {t["phase"]}</div>
+              <div class="cal-status-tag {badge_class}">{t["status"]}</div>
+              {photos_thumbs}
+            </div>
+            """
+        cards_html += '</div>'
+        st.markdown(cards_html, unsafe_allow_html=True)
+        st.markdown("<div class='sidebar-gap'></div>", unsafe_allow_html=True)
+        st.subheader("⚙️ Task Management & Photo Inspector")
 
+        for t in list(sorted_tasks):
+            with st.expander(f"📌 {t.get('month')} {t.get('day')}, {t.get('year')} - {t['name']} ({t['status']})",
+                             expanded=False):
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    new_status = st.selectbox("Update Status", ["Not Started", "In Progress", "Completed"],
+                                              index=["Not Started", "In Progress", "Completed"].index(t["status"]),
+                                              key=f"st_{t['id']}")
+                    if new_status != t["status"]:
+                        t["status"] = new_status
+                        persist_state()
+                        st.rerun()
+                with col2:
+                    if st.button("❌ Delete Task", key=f"del_{t['id']}", use_container_width=True):
+                        st.session_state.planner_tasks = [x for x in st.session_state.planner_tasks if
+                                                          x["id"] != t["id"]]
+                        persist_state()
+                        st.rerun()
+
+                st.markdown("#### 📸 Work Gallery for this Day")
+                if t.get("photos"):
+                    img_cols = st.columns(4)
+                    for idx, photo_b64 in enumerate(list(t["photos"])):
+                        with img_cols[idx % 4]:
+                            st.image(photo_b64, use_container_width=True)
+                            if st.button("🗑️ Remove Photo", key=f"del_img_{t['id']}_{idx}", use_container_width=True):
+                                t["photos"].pop(idx)
+                                persist_state()
+                                st.rerun()
+                else:
+                    st.info("No photo proof attached for this work day yet.")
+
+                st.markdown("##### Add More Photos")
+                with st.form(key=f"upload_form_{t['id']}", clear_on_submit=True):
+                    new_photos = st.file_uploader("Upload Additional Photos", type=["jpg", "jpeg", "png"],
+                                                  accept_multiple_files=True, key=f"up_{t['id']}")
+                    add_photos_btn = st.form_submit_button("📤 UPLOAD PHOTOS")
+                    if add_photos_btn and new_photos:
+                        if "photos" not in t or t["photos"] is None:
+                            t["photos"] = []
+                        for f in new_photos:
+                            bytes_data = f.read()
+                            b64_str = base64.b64encode(bytes_data).decode('utf-8')
+                            mime_type = f.type or "image/png"
+                            t["photos"].append(f"data:{mime_type};base64,{b64_str}")
+                        persist_state()
+                        st.success("Photos added successfully!")
+                        st.rerun()
+
+    st.divider()
+    if st.button("🏠 RETURN TO HOME", use_container_width=True):
+        set_view("home")
 
 elif view == "material":
     st.subheader("➕ ADD MATERIAL")
@@ -3570,6 +2773,8 @@ elif view == "communications":
             st.caption("Voice and video are provided by your secure meeting service.")
         else:
             st.info("Add an HTTPS Google Meet, Zoom, or Microsoft Teams link in Settings to enable calls.")
+            if st.button("OPEN SETTINGS", use_container_width=True, key="communications_open_settings"):
+                settings_dialog()
     if st.button("BACK TO DASHBOARD", key="communications_back"):
         set_view("home")
 
@@ -3588,7 +2793,6 @@ elif view == "settings":
                     st.error("Enter a valid email address.")
                 else:
                     settings.update({"display_name": display_name.strip(), "email": email.strip(), "meeting_url": meeting_url.strip()})
-                    add_audit_event("profile_updated", {"display_name": display_name.strip(), "email": email.strip()})
                     persist_state()
                     st.success("Profile saved.")
     with preference_tab:
@@ -3601,7 +2805,6 @@ elif view == "settings":
             if st.form_submit_button("SAVE PREFERENCES", use_container_width=True):
                 st.session_state.dark_mode = dark_mode
                 settings.update({"client_mode": client_mode, "email_notifications": email_notifications, "budget_alerts": budget_alerts, "date_format": date_format})
-                add_audit_event("preferences_updated", {"budget_alerts": budget_alerts, "email_notifications": email_notifications, "date_format": date_format})
                 persist_state()
                 st.success("Preferences saved.")
                 st.rerun()
@@ -3614,22 +2817,6 @@ elif view == "settings":
                 st.rerun()
         else:
             st.info("Password login is disabled. Set AILYN_LOGIN_PASSWORD to protect this workspace.")
-
-        with st.form("role_access_form"):
-            role_options = ["manager", "staff", "viewer"]
-            current_role_index = role_options.index(st.session_state.get("current_user_role", "manager")) if st.session_state.get("current_user_role", "manager") in role_options else 0
-            current_user_role = st.selectbox("Current role", role_options, index=current_role_index, help="Manager can edit, staff can add records, viewer is read-only.")
-            if st.form_submit_button("SAVE ROLE", use_container_width=True):
-                st.session_state.current_user_role = current_user_role
-                add_audit_event("role_updated", {"role": current_user_role})
-                persist_state()
-                st.success("Role updated.")
-                st.rerun()
-
-        st.markdown("### Role permissions")
-        st.write("- Manager: full access, budgets, backups, settings")
-        st.write("- Staff: add records, view dashboards, export reports")
-        st.write("- Viewer: read-only dashboards and exports")
         st.markdown("### Social login readiness")
         google_ready = bool(os.getenv("GOOGLE_CLIENT_ID"))
         facebook_ready = bool(os.getenv("FACEBOOK_APP_ID"))
@@ -3638,16 +2825,10 @@ elif view == "settings":
         st.caption("Social login requires provider credentials, redirect URLs, and HTTPS. Add those through your deployment secrets; never save client secrets in app data.")
         st.markdown("### Data protection")
         st.write(f"Database backups available: {history_count() > 0}")
-        if user_can_edit({"manager", "admin"}):
-            if st.button("CREATE BACKUP", use_container_width=True, key="settings_backup"):
-                backup_path = create_backup()
-                add_audit_event("backup_created", {"backup_path": os.path.basename(backup_path)})
-                with open(backup_path, "rb") as backup_file:
-                    st.download_button("DOWNLOAD BACKUP", backup_file.read(), file_name=os.path.basename(backup_path), mime="application/octet-stream", use_container_width=True, key="settings_download_backup")
-        else:
-            st.info("Backup creation is restricted to managers.")
-        st.markdown("### Recent activity")
-        render_recent_activity(limit=10)
+        if st.button("CREATE BACKUP", use_container_width=True, key="settings_backup"):
+            backup_path = create_backup()
+            with open(backup_path, "rb") as backup_file:
+                st.download_button("DOWNLOAD BACKUP", backup_file.read(), file_name=os.path.basename(backup_path), mime="application/octet-stream", use_container_width=True, key="settings_download_backup")
 
 elif view == "photo_scanner":
     st.markdown("## PHOTO STUDIO")
@@ -3779,6 +2960,31 @@ elif view == "project_tools":
             persist_state()
             st.rerun()
 
+elif view == "update":
+    st.markdown("## Upgrade Center")
+    st.caption("Administrator-only signed release installation. The current app is backed up first.")
+    admin_password = st.text_input("Administrator password", type="password", key="admin_update_password")
+    uploaded_upgrade = st.file_uploader("Choose signed Python upgrade", type=["py"], key="upgrade_file")
+    signature = st.text_input("Release SHA-256 HMAC signature", key="upgrade_signature")
+    confirm_upgrade = st.checkbox("I have reviewed this signed release and want to install it.")
+    if st.button("INSTALL SIGNED UPGRADE", use_container_width=True,
+                 disabled=not (admin_password and uploaded_upgrade and signature and confirm_upgrade)):
+        try:
+            if not ADMIN_PASSWORD or not hmac.compare_digest(admin_password, ADMIN_PASSWORD):
+                raise ValueError("Administrator authentication failed.")
+            backup_path = install_update(uploaded_upgrade, signature)
+            st.success(f"Upgrade installed. Backup created at {os.path.basename(backup_path)}.")
+            st.warning("Restart the Streamlit app to load the new version.")
+        except ValueError as error:
+            st.error(str(error))
+    st.divider()
+    st.subheader("Backups")
+    backup_dir = os.path.join(APP_DIR, "backups")
+    backup_names = sorted(os.listdir(backup_dir), reverse=True) if os.path.isdir(backup_dir) else []
+    if backup_names:
+        st.dataframe([{"Backup": name} for name in backup_names[:10]], use_container_width=True, hide_index=True)
+    else:
+        st.caption("No upgrades have been installed yet.")
 
 else:
     st.info("Welcome to Ailyn Project Management System. Use the command sidebar to navigate.")
