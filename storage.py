@@ -35,17 +35,6 @@ def _default_state_dict():
         "receipt_archive": [],
         "scanner_photos": [],
         "dark_mode": False,
-        "client_notes": [],
-        "app_settings": {
-            "display_name": "",
-            "email": "",
-            "client_mode": False,
-            "email_notifications": True,
-            "budget_alerts": True,
-            "date_format": "%Y-%m-%d",
-            "meeting_url": "",
-        },
-        "messages": [],
         "selected_role": "Labor",
     }
 
