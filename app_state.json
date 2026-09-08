@@ -1,0 +1,38 @@
+{
+  "records": [],
+  "labor_records": [],
+  "payroll_expenses": [],
+  "planner_tasks": [],
+  "budget": 0.0,
+  "budget_history": [],
+  "remaining_money": 0.0,
+  "view": "home",
+  "current_view": "home",
+  "project": {
+    "project_name": "AILYN HOUSE ACCOUNTING",
+    "client_name": "",
+    "site_address": "",
+    "project_manager": "",
+    "project_status": "Planning",
+    "target_completion_date": ""
+  },
+  "receipt_archive": [],
+  "scanner_photos": [],
+  "dark_mode": false,
+  "client_notes": [],
+  "app_settings": {
+    "theme": "dark",
+    "google_oauth_enabled": false,
+    "sender_email": "",
+    "receiver_email": "",
+    "backup_dir": "/workspaces/jhanel.py/backups",
+    "photo_dir": "/workspaces/jhanel.py/scanner_photos",
+    "receipt_dir": "/workspaces/jhanel.py/receipt_archive"
+  },
+  "messages": [],
+  "auth_users": [],
+  "audit_events": [],
+  "selected_role": "Labor",
+  "current_user": null,
+  "current_user_name": "Guest"
+}
