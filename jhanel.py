@@ -2,9 +2,6 @@ import os
 import time
 import base64
 import ast
-import subprocess
-import sys
-import importlib.util
 from io import BytesIO
 import operator
 import smtplib
@@ -112,8 +109,9 @@ PERSISTENT_KEYS = [
     "project",
     "scanner_photos",
     "dark_mode",
-    "user_role",
-    "audit_log",
+    "client_notes",
+    "app_settings",
+    "messages",
 ]
 
 def load_state():
@@ -248,83 +246,8 @@ def save_state(state):
     write_excel(state)
     write_separate_excel_files(state)
 
-
-def log_audit(event, details=""):
-    timestamp = manila_now().strftime("%Y-%m-%d %H:%M:%S")
-    st.session_state.setdefault("audit_log", [])
-    st.session_state.audit_log.append({
-        "timestamp": timestamp,
-        "event": event,
-        "details": details,
-        "role": st.session_state.get("user_role", "admin"),
-    })
-    if len(st.session_state.audit_log) > 25:
-        st.session_state.audit_log = st.session_state.audit_log[-25:]
-    persist_state()
-
-
-def has_admin_access():
-    return str(st.session_state.get("user_role", "admin")).lower() == "admin"
-
-
-APP_VERSION = "AILYN HOUSE v2.1"
+APP_VERSION = "AILYN HOUSE"
 APP_NAME = "AILYN HOUSE | Ailyn House Project"
-APP_BRAND_NAME = "AILYN HOUSE"
-APP_BRAND_SUBNAME = "PROJECT MANAGEMENT SYSTEM"
-APP_BRAND_PRIMARY = "#72f7b0"
-APP_BRAND_ACCENT = "#ffae8f"
-APP_BRAND_DEEP = "#071b12"
-APP_BRAND_PANEL = "rgba(10, 35, 25, 0.8)"
-APP_BRAND_SOFT = "#d9f9e8"
-REQUIRED_PACKAGES = [
-    "streamlit",
-    "pandas",
-    "numpy",
-    "openpyxl",
-    "PIL",
-    "pytesseract",
-    "dotenv",
-    "requests",
-]
-
-
-def get_missing_runtime_dependencies():
-    missing = []
-    for package in REQUIRED_PACKAGES:
-        module_name = package
-        if package == "PIL":
-            module_name = "PIL"
-        elif package == "dotenv":
-            module_name = "dotenv"
-        if importlib.util.find_spec(module_name) is None:
-            missing.append(package)
-    return missing
-
-
-def install_runtime_dependencies():
-    requirements_path = os.path.join(APP_DIR, "requirements.txt")
-    if not os.path.exists(requirements_path):
-        return False, f"Missing requirements file: {requirements_path}"
-    try:
-        subprocess.run(
-            [sys.executable, "-m", "pip", "install", "-r", requirements_path],
-            cwd=APP_DIR,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        return True, "Dependencies installed successfully."
-    except subprocess.CalledProcessError as exc:
-        stderr = (exc.stderr or "").strip() or (exc.stdout or "").strip() or str(exc)
-        return False, stderr
-
-
-SYSTEM_HEALTH = {
-    "app_version": APP_VERSION,
-    "missing_dependencies": get_missing_runtime_dependencies(),
-    "ocr_ready": pytesseract is not None,
-    "streamlit_ready": importlib.util.find_spec("streamlit") is not None,
-}
 
 # ================================================================
 # Construction/Materials, Payroll, and Schedule are intentionally unified.
@@ -391,7 +314,7 @@ if st.session_state.view not in {
     "home", "payroll_dashboard", "planner_input", "planner_output", "material",
     "expense", "excess", "ledger", "add_labor", "add_payroll_expense",
     "payroll_remaining", "payroll_ledger", "export", "payroll_export",
-    "receipt_archive", "update",
+    "receipt_archive", "photo_scanner", "project_tools", "settings", "communications", "client_portal", "update",
 }:
     st.session_state.view = "home"
 if "selected_role" not in st.session_state:
@@ -412,17 +335,33 @@ if "scanner_flash_mode" not in st.session_state:
     st.session_state.scanner_flash_mode = "Auto"
 if "scanner_camera_mode" not in st.session_state:
     st.session_state.scanner_camera_mode = "Back camera"
+if "client_notes" not in st.session_state:
+    st.session_state.client_notes = []
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "app_settings" not in st.session_state:
+    st.session_state.app_settings = {
+        "display_name": "",
+        "email": "",
+        "client_mode": False,
+        "email_notifications": True,
+        "budget_alerts": True,
+        "date_format": "%Y-%m-%d",
+        "meeting_url": "",
+    }
+else:
+    st.session_state.app_settings = {
+        "display_name": "",
+        "email": "",
+        "client_mode": False,
+        "email_notifications": True,
+        "budget_alerts": True,
+        "date_format": "%Y-%m-%d",
+        "meeting_url": "",
+        **st.session_state.app_settings,
+    }
 if "dark_mode" not in st.session_state:
     st.session_state.dark_mode = False
-if "user_role" not in st.session_state:
-    st.session_state.user_role = "admin"
-if "audit_log" not in st.session_state:
-    st.session_state.audit_log = [{
-        "timestamp": manila_now().strftime("%Y-%m-%d %H:%M:%S"),
-        "event": "System initialized",
-        "details": "Ailyn House project system started successfully.",
-        "role": "admin",
-    }]
 if not os.path.exists(EXCEL_FILE):
     write_excel(st.session_state)
 if not os.path.exists(MATERIALS_EXCEL_FILE) or not os.path.exists(LABOR_EXCEL_FILE):
@@ -433,6 +372,80 @@ def set_view(v):
     st.session_state.view = v
     persist_state()
     st.rerun()
+
+
+def project_settings_dialog():
+    project = st.session_state.project
+    with st.form("project_settings_form"):
+        name = st.text_input("Project name", value=project.get("name", "Ailyn House Project"))
+        client = st.text_input("Client name", value=project.get("client", ""))
+        address = st.text_input("Site address", value=project.get("address", ""))
+        manager = st.text_input("Project manager", value=project.get("manager", ""))
+        status = st.selectbox("Project status", ["Planning", "Active", "On Hold", "Completed"], index=["Planning", "Active", "On Hold", "Completed"].index(project.get("status", "Active")))
+        target_date = st.date_input("Target completion", value=datetime.fromisoformat(project["target_date"]).date() if project.get("target_date") else manila_now().date())
+        if st.form_submit_button("SAVE PROJECT DETAILS", use_container_width=True):
+            if not name.strip():
+                st.error("Project name is required.")
+            else:
+                st.session_state.project = {"name": name.strip(), "client": client.strip(), "address": address.strip(), "manager": manager.strip(), "status": status, "target_date": target_date.isoformat()}
+                persist_state()
+                st.success("Project details saved.")
+
+
+@st.dialog("Notes")
+def notes_dialog():
+    st.caption("Project notes, approvals, and photo comments")
+    folders = ["Site Notes", "Client Approval", "Photo Comments", "Change Requests"]
+    folders += [folder for folder in sorted({note.get("folder", "Site Notes") for note in st.session_state.client_notes}) if folder not in folders]
+    folder = st.selectbox("Folder", folders, key="popup_note_folder")
+    new_folder = st.text_input("New folder", key="popup_new_note_folder", placeholder="Optional folder name")
+    text = st.text_area("Note", key="popup_note_text", height=80, placeholder="Write a note for the project...")
+    if st.button("ADD NOTE", use_container_width=True, key="popup_add_note"):
+        if text.strip():
+            st.session_state.client_notes.insert(0, {"id": str(uuid.uuid4()), "folder": new_folder.strip() or folder, "text": text.strip(), "created_at": manila_now().isoformat()})
+            persist_state()
+            st.rerun()
+        st.warning("Write a note before saving.")
+    if st.session_state.client_notes:
+        st.markdown("#### RECENT NOTES")
+        st.dataframe([
+            {"Folder": note.get("folder", "Site Notes"), "Date": note.get("created_at", "").replace("T", " ")[:16], "Note": note.get("text", "")}
+            for note in st.session_state.client_notes[:8]
+        ], use_container_width=True, hide_index=True)
+        note_to_delete = st.selectbox("Delete note", ["Choose a note"] + [f"{note.get('created_at', '')[:16]} | {note.get('text', '')[:45]}" for note in st.session_state.client_notes[:8]], key="popup_delete_note_select")
+        if note_to_delete != "Choose a note" and st.button("DELETE SELECTED NOTE", use_container_width=True, key="popup_delete_note"):
+            selected_index = [f"{note.get('created_at', '')[:16]} | {note.get('text', '')[:45]}" for note in st.session_state.client_notes[:8]].index(note_to_delete)
+            st.session_state.client_notes.pop(selected_index)
+            persist_state()
+            st.rerun()
+    else:
+        st.info("No notes yet.")
+
+
+@st.dialog("Settings")
+def settings_dialog():
+    settings = st.session_state.app_settings
+    st.caption("Quick account and project preferences")
+    with st.form("quick_settings_form"):
+        display_name = st.text_input("Display name", value=settings.get("display_name", ""))
+        email = st.text_input("Email", value=settings.get("email", ""))
+        meeting_url = st.text_input("Secure voice/video meeting link", value=settings.get("meeting_url", ""), placeholder="https://meet.google.com/...", help="Use a link from Google Meet, Zoom, or Microsoft Teams.")
+        dark_mode = st.checkbox("Dark mode", value=bool(st.session_state.dark_mode))
+        budget_alerts = st.checkbox("Budget alerts", value=bool(settings.get("budget_alerts", True)))
+        email_notifications = st.checkbox("Email notifications", value=bool(settings.get("email_notifications", True)))
+        if st.form_submit_button("SAVE SETTINGS", use_container_width=True):
+            if email and ("@" not in email or "." not in email.rsplit("@", 1)[-1]):
+                st.error("Enter a valid email address.")
+            else:
+                settings.update({"display_name": display_name.strip(), "email": email.strip(), "meeting_url": meeting_url.strip(), "budget_alerts": budget_alerts, "email_notifications": email_notifications})
+                st.session_state.dark_mode = dark_mode
+                persist_state()
+                st.success("Settings saved.")
+    st.markdown("#### ACCOUNT ACCESS")
+    st.success("Workspace password enabled.") if LOGIN_PASSWORD else st.info("Workspace password is disabled.")
+    if LOGIN_PASSWORD and st.button("SIGN OUT", use_container_width=True, key="popup_sign_out"):
+        st.session_state.authenticated = False
+        st.rerun()
 
 
 def total_materials():
@@ -848,6 +861,8 @@ def clear_all():
     st.session_state.budget_history = []
     st.session_state.remaining_money = 0.0
     st.session_state.receipt_archive = []
+    st.session_state.client_notes = []
+    st.session_state.messages = []
     for photo in st.session_state.get("scanner_photos", []):
         delete_scanner_photo(photo.get("file", ""))
     st.session_state.scanner_photos = []
@@ -864,46 +879,147 @@ def persist_state():
     save_state(st.session_state)
 
 
-log_audit("Session loaded", f"User role: {st.session_state.get('user_role', 'admin')}")
-
-
-def total_materials():
-    return sum(r["amount"] for r in st.session_state.records if r["type"] == "material")
-
-
-def total_expenses():
-    return sum(r["amount"] for r in st.session_state.records if r["type"] == "expense")
-
-
-def total_excess():
-    return sum(r["amount"] for r in st.session_state.records if r["type"] == "excess")
-
-
-def get_total():
-    return total_materials() + total_expenses()
-
-
-def get_balance():
-    return float(st.session_state.budget) - total_excess() - get_total()
-
-
-def monthly_spend(month=None):
-    month = month or manila_now().strftime("%Y-%m")
-    construction = sum(
-        float(record.get("amount", 0)) for record in st.session_state.records
-        if record.get("type") in {"material", "expense"} and month_key(record) == month
+@st.dialog("Take Photo")
+def photo_camera_dialog():
+    st.markdown("""
+    <style>
+    div[role="dialog"] { background: #080b0c; border: 1px solid #33423d; border-radius: 24px; padding: 1rem 1rem .85rem; }
+    div[role="dialog"] [data-testid="stVerticalBlock"] { gap: 0.55rem; }
+    div[role="dialog"] h2 { color: #f4fff7; font-size: 1.35rem; letter-spacing: .01em; }
+    div[role="dialog"] [data-testid="stRadio"] label p { font-size: 12px; font-weight: 700; }
+    div[role="dialog"] [data-testid="stCaptionContainer"] p { color: #9fb0a6; font-size: 10px; }
+    div[role="dialog"] [data-testid="stCameraInput"] { width: 100%; }
+    div[role="dialog"] [data-testid="stCameraInput"] video,
+    div[role="dialog"] [data-testid="stCameraInput"] img { width: 100% !important; max-height: 52vh; object-fit: cover; border-radius: 14px; }
+    div[role="dialog"] button { min-height: 44px !important; font-size: 12px !important; }
+    @media (max-width: 600px) {
+        div[role="dialog"] { width: calc(100vw - 20px) !important; max-width: calc(100vw - 20px) !important; margin: 10px !important; padding: .8rem .7rem .7rem; }
+        div[role="dialog"] h2 { font-size: 1.15rem; }
+        div[role="dialog"] [data-testid="stRadio"] > div { gap: 4px !important; }
+        div[role="dialog"] [data-testid="stRadio"] label { padding-right: 4px !important; }
+        div[role="dialog"] [data-testid="stRadio"] label p { font-size: 11px; }
+        div[role="dialog"] [data-testid="stCameraInput"] video,
+        div[role="dialog"] [data-testid="stCameraInput"] img { max-height: 45vh; }
+        div[role="dialog"] [data-testid="stDataFrame"] { max-width: 100%; overflow-x: auto; }
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    photo_category = st.selectbox(
+        "WORK CATEGORY",
+        ["General", "Before", "After", "Framing", "Electrical", "Plumbing", "Painting", "Inspection"],
+        key="camera_photo_category",
     )
-    labor = sum(float(record.get("net", 0)) for record in st.session_state.labor_records if month_key(record) == month)
-    payroll_expenses = sum(float(record.get("price", 0)) for record in st.session_state.payroll_expenses if month_key(record) == month)
-    return construction + labor + payroll_expenses
+    st.caption("Rear camera only. Allow camera access when your phone asks.")
+    photo = st.camera_input("TAKE PHOTO", key=f"modal_photo_scanner_{st.session_state.scanner_input_version}")
+    if photo:
+        photo_hash = hashlib.sha256(photo.getvalue()).hexdigest()
+        if st.session_state.get("scanned_photo_hash") != photo_hash:
+            st.session_state.scanned_photo_bytes = photo.getvalue()
+            st.session_state.scanned_photo_mime = photo.type or "image/jpeg"
+            try:
+                st.session_state.scanned_photo_text = scan_photo_text(photo)
+            except TESSERACT_NOT_FOUND_ERROR:
+                st.session_state.scanned_photo_text = "OCR is unavailable. Install Tesseract OCR on the server."
+            except RuntimeError as error:
+                st.session_state.scanned_photo_text = str(error)
+            except (OSError, ValueError):
+                st.session_state.scanned_photo_text = "The photo could not be read. Try taking it again."
+            st.session_state.scanned_photo_hash = photo_hash
 
-
-def monthly_construction_spend(month=None):
-    month = month or manila_now().strftime("%Y-%m")
-    return sum(
-        float(record.get("amount", 0)) for record in st.session_state.records
-        if record.get("type") in {"material", "expense"} and month_key(record) == month
-    )
+    if st.session_state.get("scanned_photo_bytes"):
+        view_col, delete_col = st.columns(2)
+        with view_col:
+            if st.button("◀ VIEW PHOTO", use_container_width=True, key="modal_view_photo"):
+                st.session_state.show_scanned_photo = True
+        with delete_col:
+            if st.button("DELETE ▶", use_container_width=True, key="modal_delete_photo"):
+                photo_hash = st.session_state.get("scanned_photo_hash")
+                kept_photos = []
+                for saved_photo in st.session_state.scanner_photos:
+                    if saved_photo.get("hash") == photo_hash:
+                        delete_scanner_photo(saved_photo.get("file", ""))
+                    else:
+                        kept_photos.append(saved_photo)
+                st.session_state.scanner_photos = kept_photos
+                persist_state()
+                st.session_state.scanned_photo_bytes = None
+                st.session_state.scanned_photo_hash = None
+                st.session_state.scanned_photo_text = ""
+                st.session_state.scanner_input_version += 1
+                st.rerun()
+        if st.session_state.get("show_scanned_photo"):
+            st.image(st.session_state.scanned_photo_bytes, caption="Captured photo", use_container_width=True)
+        save_col, retake_col = st.columns(2)
+        with save_col:
+            if st.button("SAVE FILE", use_container_width=True, key="modal_save_photo"):
+                photo_hash = st.session_state.get("scanned_photo_hash")
+                if not any(photo.get("hash") == photo_hash for photo in st.session_state.scanner_photos):
+                    photo_id = str(uuid.uuid4())
+                    relative_path = save_scanner_photo(st.session_state.scanned_photo_bytes, st.session_state.get("scanned_photo_mime", "image/jpeg"), photo_id)
+                    st.session_state.scanner_photos.append({"id": photo_id, "hash": photo_hash, "file": relative_path, "tag": photo_category, "saved_at": manila_now().isoformat()})
+                    persist_state()
+                    st.success("Photo saved to the project archive.")
+                else:
+                    st.info("This photo is already saved.")
+        with retake_col:
+            if st.button("RETAKE", use_container_width=True, key="modal_retake_photo"):
+                st.session_state.scanned_photo_bytes = None
+                st.session_state.scanned_photo_hash = None
+                st.session_state.scanned_photo_text = ""
+                st.session_state.show_scanned_photo = False
+                st.session_state.scanner_input_version += 1
+                st.rerun()
+        scanned_text = st.session_state.get("scanned_photo_text", "")
+        if scanned_text:
+            if scanned_text.startswith("OCR is unavailable") or scanned_text.startswith("The photo could not be read"):
+                st.warning(scanned_text)
+            else:
+                scanned_fields = parse_scanned_receipt(scanned_text)
+                st.success("PHOTO SCANNED AND ENCODED")
+                st.markdown("#### DETECTED RECEIPT DETAILS")
+                st.table({
+                    "Field": ["Item", "Quantity", "Unit price", "Delivery", "Total"],
+                    "Encoded value": [
+                        scanned_fields["name"] or "Not detected",
+                        scanned_fields["qty"],
+                        f"PHP {scanned_fields['price']:,.2f}",
+                        f"PHP {scanned_fields['delivery']:,.2f}",
+                        f"PHP {(scanned_fields['price'] * scanned_fields['qty'] + scanned_fields['delivery']):,.2f}",
+                    ],
+                })
+                receipt_hash = st.session_state.get("scanned_photo_hash")
+                receipt_already_saved = any(record.get("source_photo_hash") == receipt_hash for record in st.session_state.records)
+                if receipt_already_saved:
+                    st.info("This scanned receipt is already saved in the Excel ledger.")
+                elif st.button("SAVE RECEIPT TO EXCEL", use_container_width=True, key="save_scanned_receipt_excel"):
+                    if not scanned_fields["name"]:
+                        st.warning("The receipt item name was not detected. Enter it in Material Entry before saving.")
+                    elif scanned_fields["price"] <= 0:
+                        st.warning("The receipt total was not detected. Enter the amount in Material Entry before saving.")
+                    else:
+                        saved = add_tx(
+                            scanned_fields["name"],
+                            scanned_fields["price"],
+                            scanned_fields["qty"],
+                            scanned_fields["delivery"],
+                            "material",
+                            "CLIENT RECEIPT SCAN",
+                            details={"source_photo_hash": receipt_hash, "ocr_text": scanned_text},
+                        )
+                        if saved:
+                            st.success("Receipt saved to the Excel ledger.")
+            with st.expander("View scanned text", expanded=False):
+                st.text_area("Recognized text", value=scanned_text, height=120, key="modal_scanned_text", disabled=True, label_visibility="collapsed")
+            if not scanned_text.startswith("OCR is unavailable") and not scanned_text.startswith("The photo could not be read") and st.button("USE SCAN IN MATERIAL ENTRY", use_container_width=True, key="modal_use_scanned_material"):
+                st.session_state.material_name = scanned_fields["name"]
+                st.session_state.material_price = scanned_fields["price"] or None
+                st.session_state.material_qty = scanned_fields["qty"]
+                st.session_state.material_delivery = scanned_fields["delivery"] or None
+                set_view("material")
+    if st.button("CLOSE CAMERA", use_container_width=True, key="close_photo_dialog"):
+        st.session_state.scanner_open = False
+        st.session_state.show_scanned_photo = False
+        st.rerun()
 
 
 def install_update(uploaded_file, signature):
@@ -1609,10 +1725,10 @@ with st.sidebar:
     st.markdown(f"""
     <div class="sidebar-brand">
       <div class="brand-row">
-        <img class="brand-logo" src="{AILYN_LOGO_DATA}" alt="Ailyn House Logo">
+        <img class="brand-logo" src="{AILYN_LOGO_DATA}" alt="Ailyn Construction Logo">
         <div class="brand-copy">
-          <div class="brand-title"><span>{APP_BRAND_NAME}</span><span>PROJECT</span></div>
-          <div class="brand-sub">{APP_BRAND_SUBNAME}</div>
+        <div class="brand-title"><span>AILYN HOUSE</span><span>PROJECT</span></div>
+          <div class="brand-sub">Official Project Control</div>
         </div>
       </div>
     </div>
@@ -1623,26 +1739,16 @@ with st.sidebar:
         unsafe_allow_html=True
     )
 
-    st.markdown("<div class='sidebar-section-label'>SYSTEM STATUS</div>", unsafe_allow_html=True)
-    missing_deps = get_missing_runtime_dependencies()
-    status_color = "#79f7b0" if not missing_deps else "#ffb26b"
     st.markdown(
-        f"<div class='sidebar-status-box' style='border:1px solid {status_color}; padding:10px 12px; border-radius:12px; background:rgba(10,20,15,.35); margin-bottom:8px;'>"
-        f"<div style='font-size:10px; letter-spacing:.12em; color:{status_color}; text-transform:uppercase;'>APP VERSION</div>"
-        f"<div style='font-size:15px; font-weight:800; margin-top:6px;'>{APP_VERSION}</div>"
-        f"<div style='font-size:11px; color:#dfece4; margin-top:6px;'>Dependencies: {'OK' if not missing_deps else f'{len(missing_deps)} missing'}</div>"
-        f"</div>",
+        "<div class='photo-scanner-title'>PHOTO SCANNER</div>"
+        "<div class='photo-scanner-subtitle'>Capture receipts and project progress</div>",
         unsafe_allow_html=True,
     )
-    if missing_deps:
-        st.warning(f"Missing runtime packages: {', '.join(missing_deps)}")
-        if st.button("INSTALL DEPENDENCIES", use_container_width=True, key="install_deps_sidebar"):
-            ok, message = install_runtime_dependencies()
-            if ok:
-                st.success(message)
-                st.rerun()
-            else:
-                st.error(message)
+    if st.button("📷 TAKE PHOTO", use_container_width=True, key="take_photo_sidebar"):
+        set_view("photo_scanner")
+
+    if st.button("📝 NOTES", use_container_width=True, key="sidebar_notes_popup"):
+        notes_dialog()
 
     st.markdown("<div class='sidebar-section-label'>PROJECT OVERVIEW</div>", unsafe_allow_html=True)
     if st.button("📊 DASHBOARD", use_container_width=True, key="side_dashboard"):
@@ -1660,12 +1766,22 @@ with st.sidebar:
     with st.expander("PROJECT DETAILS", expanded=False):
         project = st.session_state.project
         st.caption(f"Status: {project.get('status', 'Active')}")
+        if st.button("EDIT PROJECT DETAILS", use_container_width=True, key="side_project_details"):
+            project_settings_dialog()
 
     st.markdown("<div class='sidebar-section-label'>PROJECT CONTROL</div>", unsafe_allow_html=True)
     if st.button("📝 NEW WORK ENTRY", use_container_width=True, key="side_new_work"):
         set_view("planner_input")
     if st.button("📅 SCHEDULE & PROGRESS", use_container_width=True, key="side_schedule"):
         set_view("planner_output")
+    if st.button("🧰 PROJECT TOOLS", use_container_width=True, key="side_project_tools"):
+        set_view("project_tools")
+    if st.button("⚙️ SETTINGS", use_container_width=True, key="side_settings"):
+        settings_dialog()
+    if st.button("💬 MESSAGES & CALLS", use_container_width=True, key="side_messages"):
+        set_view("communications")
+    if st.button("👤 CLIENT PORTAL", use_container_width=True, key="side_client_portal"):
+        set_view("client_portal")
 
     st.markdown("<div class='sidebar-section-label'>FINANCIAL OPERATIONS</div>", unsafe_allow_html=True)
     if st.button("🧱 MATERIAL ENTRY", use_container_width=True, key="side_material"):
@@ -1697,12 +1813,7 @@ with st.sidebar:
 
     st.markdown("<div class='sidebar-section-label'>ADMINISTRATION</div>", unsafe_allow_html=True)
     if st.button("🔐 ADMIN CONSOLE", use_container_width=True, key="side_admin"):
-        if has_admin_access():
-            set_view("update")
-        else:
-            st.session_state.view = "update"
-            st.warning("Admin access required. Please switch user role to Admin in the management console.")
-            st.rerun()
+        set_view("update")
 
 view = st.session_state.view
 
@@ -1723,20 +1834,13 @@ if view == "home":
 
     st.markdown(f"""
     <div class="dashboard-heading">
-      <div class="dashboard-brand-row">
-        <img src="{AILYN_LOGO_DATA}" alt="Ailyn House Logo">
-        <div>
-          <div class="dashboard-heading-title">{APP_BRAND_NAME}</div>
-          <div class="dashboard-heading-sub">{APP_BRAND_SUBNAME}</div>
-        </div>
+    <img src="{AILYN_LOGO_DATA}" alt="Ailyn Construction Logo">
+      <div>
+        <div class="dashboard-heading-title">AILYN HOUSE PROJECT</div>
+        <div class="dashboard-heading-sub">PROJECT MANAGEMENT SYSTEM</div>
       </div>
     </div>
-    <div class="dashboard-status-bar">
-      <div class="dashboard-status-chip">System Online</div>
-      <div class="dashboard-status-chip accent">Brand Protected</div>
-      <div class="dashboard-status-chip">{APP_VERSION}</div>
-    </div>
-    <div class="dashboard-welcome">🛡️ &nbsp; Welcome back, <b>{st.session_state.project.get("name", "Ailyn House Project")}</b> &nbsp;|&nbsp; Manage your construction project with a premium operational dashboard.</div>
+    <div class="dashboard-welcome">🛡️ &nbsp; Welcome back, <b>{st.session_state.project.get("name", "Ailyn House Project")}</b> &nbsp;|&nbsp; Manage your construction project efficiently.</div>
     """, unsafe_allow_html=True)
     project = st.session_state.project
     if project.get("client") or project.get("address") or project.get("target_date"):
@@ -2538,66 +2642,327 @@ elif view == "receipt_archive":
                     st.success(f"Deleted: {report_path.name}")
                     st.rerun()
 
-elif view == "update":
-    st.markdown("## Administration Console")
-    st.caption("Ailyn House operational security, system health, role control, and upgrade center.")
-
-    if not has_admin_access():
-        st.warning("Current user role is not Administrator. Switch to Admin to unlock system actions.")
-        with st.form("role_access_form"):
-            selected_role = st.selectbox("User role", ["Operator", "Admin"], index=1 if st.session_state.get("user_role") == "admin" else 0)
-            if st.form_submit_button("SAVE ROLE"):
-                st.session_state.user_role = selected_role.lower()
-                log_audit("Role changed", f"Access role updated to {selected_role}")
-                st.success(f"Role saved as {selected_role}.")
-                st.rerun()
-        st.stop()
-
-    user_role = st.session_state.get("user_role", "admin")
-    st.markdown(f"**Current access role:** {user_role.title()}")
-
-    role_col, status_col = st.columns(2)
-    with role_col:
-        user_role_choice = st.selectbox("Management role", ["Admin", "Operator"], index=0 if user_role.lower() == "admin" else 1, key="system_user_role_select")
-        if st.button("APPLY ROLE", use_container_width=True):
-            st.session_state.user_role = user_role_choice.lower()
-            log_audit("Role changed", f"Access role updated to {user_role_choice}")
-            st.success(f"Access role changed to {user_role_choice}.")
-            st.rerun()
-    with status_col:
-        st.metric("System health", "ONLINE" if not get_missing_runtime_dependencies() else "WARN")
-
-    st.subheader("System Overview")
-    overview_cols = st.columns(4)
-    with overview_cols[0]:
-        st.metric("App version", APP_VERSION)
-    with overview_cols[1]:
-        st.metric("Dependencies", "OK" if not get_missing_runtime_dependencies() else f"{len(get_missing_runtime_dependencies())} missing")
-    with overview_cols[2]:
-        st.metric("Active records", len(st.session_state.records))
-    with overview_cols[3]:
-        st.metric("Audit log", len(st.session_state.audit_log))
-
-    st.divider()
-    st.markdown("### Upgrade Center")
-    st.caption("System health, dependency checks, and signed app installation.")
-    missing_deps = get_missing_runtime_dependencies()
-    if missing_deps:
-        st.warning(f"Required runtime packages are missing: {', '.join(missing_deps)}")
-    else:
-        st.success("All required runtime packages are available.")
-
-    if st.button("INSTALL REQUIRED DEPENDENCIES", use_container_width=True, key="upgrade_install_deps"):
-        ok, message = install_runtime_dependencies()
-        if ok:
-            log_audit("Dependency install", message)
-            st.success(message)
-            st.rerun()
+elif view == "client_portal":
+    project = st.session_state.project
+    budget = float(st.session_state.budget or 0)
+    spent = float(get_total() or 0)
+    balance = float(get_balance() or 0)
+    completed_tasks = sum(task.get("status") == "Completed" for task in st.session_state.planner_tasks)
+    total_tasks = len(st.session_state.planner_tasks)
+    progress = int(completed_tasks / total_tasks * 100) if total_tasks else 0
+    st.markdown("## CLIENT PORTAL")
+    st.caption(f"{project.get('name', 'Ailyn House Project')} | {project.get('status', 'Active')} | Client view")
+    portal_metrics = st.columns(4)
+    with portal_metrics[0]:
+        st.metric("PROJECT PROGRESS", f"{progress}%")
+    with portal_metrics[1]:
+        st.metric("BUDGET", f"PHP {budget:,.0f}")
+    with portal_metrics[2]:
+        st.metric("SPENT", f"PHP {spent:,.0f}")
+    with portal_metrics[3]:
+        st.metric("BALANCE", f"PHP {balance:,.0f}")
+    st.progress(progress / 100, text=f"{completed_tasks} of {total_tasks} scheduled tasks completed")
+    overview_col, updates_col = st.columns([1.1, 0.9])
+    with overview_col:
+        st.markdown("### PROJECT DETAILS")
+        st.dataframe([{
+            "Client": project.get("client") or "Not set",
+            "Site": project.get("address") or "Not set",
+            "Target": project.get("target_date") or "Not set",
+            "Manager": project.get("manager") or "Not set",
+        }], use_container_width=True, hide_index=True)
+        st.markdown("### RECENT PROJECT PHOTOS")
+        client_photos = st.session_state.get("scanner_photos", [])[:6]
+        photo_columns = st.columns(3)
+        for index, photo in enumerate(client_photos):
+            photo_path = os.path.join(APP_DIR, photo.get("file", ""))
+            if os.path.isfile(photo_path):
+                with photo_columns[index % 3]:
+                    st.image(photo_path, use_container_width=True)
+                    st.caption(f"{photo.get('tag', 'General')} | {photo.get('saved_at', '')[:10]}")
+        if not client_photos:
+            st.info("Project photos will appear here after they are saved.")
+    with updates_col:
+        st.markdown("### SCHEDULE")
+        upcoming_tasks = sorted(st.session_state.planner_tasks, key=lambda task: task.get("date_obj", ""), reverse=False)[:8]
+        if upcoming_tasks:
+            st.dataframe([{"Date": task.get("date_obj", ""), "Work": task.get("description", task.get("name", "")), "Status": task.get("status", "Planned")} for task in upcoming_tasks], use_container_width=True, hide_index=True)
         else:
-            log_audit("Dependency install failed", message)
-            st.error(message)
+            st.info("No schedule updates yet.")
+        st.markdown("### CLIENT UPDATES")
+        client_notes = [note for note in st.session_state.client_notes if note.get("folder") in {"Client Approval", "Photo Comments"}]
+        if client_notes:
+            for note in client_notes[:6]:
+                st.markdown(f"**{note.get('folder', 'Update')}**  \n{note.get('text', '')}")
+                st.caption(note.get("created_at", "").replace("T", " ")[:16])
+        else:
+            st.info("No client updates yet.")
+    action_col, message_col = st.columns(2)
+    with action_col:
+        if st.button("OPEN MESSAGES & CALLS", use_container_width=True, key="portal_communications"):
+            set_view("communications")
+    with message_col:
+        if st.button("BACK TO DASHBOARD", use_container_width=True, key="portal_dashboard"):
+            set_view("home")
 
-    st.divider()
+elif view == "communications":
+    st.markdown("## MESSAGES & CALLS")
+    st.caption("Keep project communication and client meetings in one place.")
+    message_tab, radio_tab, calls_tab = st.tabs(["MESSAGES", "PROJECT RADIO", "VOICE & VIDEO CALLS"])
+    with message_tab:
+        message_sender = st.text_input("Your name", value=st.session_state.app_settings.get("display_name", "") or "Project team", key="message_sender")
+        message_text = st.text_area("Message", placeholder="Write an update for the client...", height=90, key="message_text")
+        if st.button("SEND MESSAGE", use_container_width=True, key="send_message"):
+            if message_text.strip():
+                st.session_state.messages.insert(0, {"id": str(uuid.uuid4()), "sender": message_sender.strip() or "Project team", "text": message_text.strip(), "sent_at": manila_now().isoformat()})
+                persist_state()
+                st.rerun()
+            st.warning("Write a message before sending.")
+        if st.session_state.messages:
+            st.markdown("### Conversation")
+            for message in st.session_state.messages[:30]:
+                sent_at = message.get("sent_at", "").replace("T", " ")[:16]
+                st.markdown(f"**{message.get('sender', 'Project team')}**  \n{message.get('text', '')}")
+                st.caption(sent_at)
+                st.divider()
+        else:
+            st.info("No messages yet. Send the first project update.")
+    with radio_tab:
+        st.markdown("### Project radio")
+        st.caption("Use channels for quick site updates. Voice clips can be recorded on your phone and uploaded here.")
+        radio_channel = st.selectbox("Channel", ["General", "Site Team", "Safety", "Client Updates"], key="radio_channel")
+        radio_sender = st.text_input("Call sign", value=st.session_state.app_settings.get("display_name", "") or "Project team", key="radio_sender")
+        if st.button("PUSH TO TALK", use_container_width=True, key="radio_push_to_talk"):
+            st.session_state.radio_transmitting = not st.session_state.get("radio_transmitting", False)
+        if st.session_state.get("radio_transmitting"):
+            st.success("TRANSMITTING")
+        else:
+            st.info("Radio ready")
+        radio_text = st.text_input("Broadcast text", placeholder="Site update or urgent message", key="radio_text")
+        voice_clip = st.file_uploader("Voice clip (optional)", type=["mp3", "wav", "m4a", "ogg"], key="radio_voice_clip")
+        if st.button("BROADCAST", use_container_width=True, key="broadcast_radio"):
+            if radio_text.strip() or voice_clip:
+                radio_message = {"id": str(uuid.uuid4()), "kind": "radio", "channel": radio_channel, "sender": radio_sender.strip() or "Project team", "text": radio_text.strip(), "sent_at": manila_now().isoformat()}
+                if voice_clip:
+                    radio_message["audio"] = base64.b64encode(voice_clip.getvalue()).decode("ascii")
+                    radio_message["audio_type"] = voice_clip.type or "audio/mpeg"
+                st.session_state.messages.insert(0, radio_message)
+                st.session_state.radio_transmitting = False
+                persist_state()
+                st.rerun()
+            st.warning("Add text or a voice clip before broadcasting.")
+        radio_messages = [message for message in st.session_state.messages if message.get("kind") == "radio" and message.get("channel") == radio_channel]
+        if radio_messages:
+            st.markdown("### Channel activity")
+            for message in radio_messages[:20]:
+                st.markdown(f"**{message.get('sender', 'Project team')}** | {message.get('sent_at', '').replace('T', ' ')[:16]}  \n{message.get('text', '')}")
+                if message.get("audio"):
+                    st.audio(base64.b64decode(message["audio"]), format=message.get("audio_type", "audio/mpeg"))
+        else:
+            st.info("No broadcasts in this channel yet.")
+    with calls_tab:
+        meeting_url = st.session_state.app_settings.get("meeting_url", "")
+        st.markdown("### Client meeting room")
+        if meeting_url.startswith("https://"):
+            st.success("Secure meeting link is ready.")
+            call_video, call_voice = st.columns(2)
+            with call_video:
+                st.link_button("START VIDEO CALL", meeting_url, use_container_width=True)
+            with call_voice:
+                st.link_button("START VOICE CALL", meeting_url, use_container_width=True)
+            st.caption("Voice and video are provided by your secure meeting service.")
+        else:
+            st.info("Add an HTTPS Google Meet, Zoom, or Microsoft Teams link in Settings to enable calls.")
+            if st.button("OPEN SETTINGS", use_container_width=True, key="communications_open_settings"):
+                settings_dialog()
+    if st.button("BACK TO DASHBOARD", key="communications_back"):
+        set_view("home")
+
+elif view == "settings":
+    settings = st.session_state.app_settings
+    st.markdown("## SETTINGS")
+    st.caption("Manage your account, project preferences, notifications, and security.")
+    profile_tab, preference_tab, security_tab = st.tabs(["PROFILE", "PREFERENCES", "SECURITY"])
+    with profile_tab:
+        with st.form("account_profile_form"):
+            display_name = st.text_input("Display name", value=settings.get("display_name", ""), placeholder="Your name")
+            email = st.text_input("Email address", value=settings.get("email", ""), placeholder="name@example.com")
+            meeting_url = st.text_input("Secure voice/video meeting link", value=settings.get("meeting_url", ""), placeholder="https://meet.google.com/...")
+            if st.form_submit_button("SAVE PROFILE", use_container_width=True):
+                if email and ("@" not in email or "." not in email.rsplit("@", 1)[-1]):
+                    st.error("Enter a valid email address.")
+                else:
+                    settings.update({"display_name": display_name.strip(), "email": email.strip(), "meeting_url": meeting_url.strip()})
+                    persist_state()
+                    st.success("Profile saved.")
+    with preference_tab:
+        with st.form("app_preferences_form"):
+            dark_mode = st.checkbox("Dark mode", value=bool(st.session_state.dark_mode))
+            client_mode = st.checkbox("Client view mode", value=bool(settings.get("client_mode", False)), help="Use this preference when preparing a client-facing project view.")
+            email_notifications = st.checkbox("Email notifications", value=bool(settings.get("email_notifications", True)))
+            budget_alerts = st.checkbox("Budget alerts", value=bool(settings.get("budget_alerts", True)))
+            date_format = st.selectbox("Date format", ["%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y"], index=["%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y"].index(settings.get("date_format", "%Y-%m-%d")))
+            if st.form_submit_button("SAVE PREFERENCES", use_container_width=True):
+                st.session_state.dark_mode = dark_mode
+                settings.update({"client_mode": client_mode, "email_notifications": email_notifications, "budget_alerts": budget_alerts, "date_format": date_format})
+                persist_state()
+                st.success("Preferences saved.")
+                st.rerun()
+    with security_tab:
+        st.markdown("### Account access")
+        if LOGIN_PASSWORD:
+            st.success("Workspace password login is enabled.")
+            if st.button("SIGN OUT", use_container_width=True, key="settings_sign_out"):
+                st.session_state.authenticated = False
+                st.rerun()
+        else:
+            st.info("Password login is disabled. Set AILYN_LOGIN_PASSWORD to protect this workspace.")
+        st.markdown("### Social login readiness")
+        google_ready = bool(os.getenv("GOOGLE_CLIENT_ID"))
+        facebook_ready = bool(os.getenv("FACEBOOK_APP_ID"))
+        st.write(f"Google login: {'Configured' if google_ready else 'Needs OAuth configuration'}")
+        st.write(f"Facebook login: {'Configured' if facebook_ready else 'Needs OAuth configuration'}")
+        st.caption("Social login requires provider credentials, redirect URLs, and HTTPS. Add those through your deployment secrets; never save client secrets in app data.")
+        st.markdown("### Data protection")
+        st.write(f"Database backups available: {history_count() > 0}")
+        if st.button("CREATE BACKUP", use_container_width=True, key="settings_backup"):
+            backup_path = create_backup()
+            with open(backup_path, "rb") as backup_file:
+                st.download_button("DOWNLOAD BACKUP", backup_file.read(), file_name=os.path.basename(backup_path), mime="application/octet-stream", use_container_width=True, key="settings_download_backup")
+
+elif view == "photo_scanner":
+    st.markdown("## PHOTO STUDIO")
+    st.caption("Capture a receipt or project update. The app will read and organize the photo for you.")
+    studio_capture, studio_status = st.columns([1.25, 0.75])
+    with studio_capture:
+        st.markdown("### Camera")
+        st.markdown("Use your device camera to create a clear project record.")
+        if st.button("📷 OPEN CAMERA", use_container_width=True, key="open_photo_studio"):
+            st.session_state.scanner_open = True
+            st.rerun()
+        if st.session_state.scanner_open:
+            photo_camera_dialog()
+    with studio_status:
+        st.markdown("### Studio status")
+        st.metric("Saved photos", len(st.session_state.get("scanner_photos", [])))
+        if st.session_state.get("scanned_photo_bytes"):
+            st.success("Photo ready for review")
+            st.caption("Review the scan, save the file, or retake the photo from the camera window.")
+        else:
+            st.info("No photo captured yet")
+        if st.button("OPEN PHOTO GALLERY", use_container_width=True, key="studio_gallery"):
+            set_view("project_tools")
+    if st.button("BACK TO DASHBOARD", key="studio_back"):
+        set_view("home")
+
+elif view == "project_tools":
+    st.subheader("PROJECT TOOLS")
+    st.caption("Organize project evidence, find records quickly, and prepare focused reports.")
+    tools_gallery, tools_search, tools_cleanup = st.tabs(["PHOTO GALLERY", "SEARCH & REPORTS", "DATA CLEANUP"])
+
+    with tools_gallery:
+        uploaded_photos = st.file_uploader("Add project photos", type=["jpg", "jpeg", "png", "webp"], accept_multiple_files=True, key="project_photo_uploads")
+        upload_tag = st.selectbox("Photo category", ["General", "Before", "After", "Framing", "Electrical", "Plumbing", "Painting", "Inspection"], key="project_photo_tag")
+        if uploaded_photos and st.button("SAVE ALL PHOTOS", use_container_width=True, key="save_project_photos"):
+            existing_hashes = {photo.get("hash") for photo in st.session_state.scanner_photos}
+            saved_count = 0
+            for uploaded in uploaded_photos:
+                photo_bytes, photo_mime = normalize_photo_bytes(uploaded.getvalue(), uploaded.type or "image/jpeg")
+                photo_hash = hashlib.sha256(photo_bytes).hexdigest()
+                if photo_hash in existing_hashes:
+                    continue
+                photo_id = str(uuid.uuid4())
+                relative_path = save_scanner_photo(photo_bytes, photo_mime, photo_id)
+                st.session_state.scanner_photos.append({"id": photo_id, "hash": photo_hash, "file": relative_path, "tag": upload_tag, "saved_at": manila_now().isoformat()})
+                existing_hashes.add(photo_hash)
+                saved_count += 1
+            persist_state()
+            st.success(f"Saved {saved_count} new photo(s).")
+        photos = st.session_state.get("scanner_photos", [])
+        if not photos:
+            st.info("No saved project photos yet.")
+        else:
+            selected_tag = st.selectbox("Filter photos", ["All"] + sorted({photo.get("tag", "General") for photo in photos}), key="gallery_filter")
+            visible_photos = [photo for photo in photos if selected_tag == "All" or photo.get("tag", "General") == selected_tag]
+            gallery_columns = st.columns(4)
+            for index, photo in enumerate(visible_photos):
+                photo_path = os.path.abspath(os.path.join(APP_DIR, photo.get("file", "")))
+                if not os.path.isfile(photo_path):
+                    continue
+                with gallery_columns[index % 4]:
+                    with open(photo_path, "rb") as image_file:
+                        image_bytes = image_file.read()
+                    st.image(image_bytes, use_container_width=True)
+                    st.caption(f"{photo.get('tag', 'General')} | {photo.get('saved_at', '')[:10]}")
+                    st.download_button("DOWNLOAD", image_bytes, file_name=os.path.basename(photo_path), key=f"download_photo_{photo['id']}", use_container_width=True)
+            if len(visible_photos) >= 2:
+                st.markdown("#### BEFORE / AFTER COMPARISON")
+                photo_options = {f"{photo.get('tag', 'General')} | {photo.get('saved_at', '')[:10]} | {photo['id'][:8]}": photo for photo in visible_photos}
+                compare_left, compare_right = st.columns(2)
+                with compare_left:
+                    left_label = st.selectbox("Before photo", list(photo_options), key="compare_left")
+                with compare_right:
+                    right_label = st.selectbox("After photo", list(photo_options), index=min(1, len(photo_options) - 1), key="compare_right")
+                comparison_columns = st.columns(2)
+                for column, label in zip(comparison_columns, (left_label, right_label)):
+                    comparison_path = os.path.join(APP_DIR, photo_options[label].get("file", ""))
+                    if os.path.isfile(comparison_path):
+                        with column:
+                            st.image(comparison_path, use_container_width=True)
+
+    with tools_search:
+        query = st.text_input("Search materials, labor, payroll, and tasks", key="global_search").strip().lower()
+        all_records = searchable_records(st.session_state)
+        all_records += [{"category": "Task", **task} for task in st.session_state.get("planner_tasks", [])]
+        results = [record for record in all_records if not query or query in " ".join(str(value) for value in record.values()).lower()]
+        st.metric("Matching records", len(results))
+        if results:
+            st.dataframe(results, use_container_width=True, hide_index=True)
+        else:
+            st.info("No matching records.")
+        st.markdown("#### CUSTOM REPORT")
+        report_type = st.selectbox("Report data", ["All records", "Materials only", "Expenses only"], key="custom_report_type")
+        report_records = [record for record in all_records if report_type == "All records" or record.get("category") == report_type.removesuffix(" only")]
+        report_records = [{
+            "type": "material" if record.get("category") == "Material" else "expense",
+            "date": record.get("date", record.get("month", "")),
+            "qty": record.get("qty", 1),
+            "name": record.get("name", record.get("item", record.get("description", ""))),
+            "price": record.get("price", record.get("amount", record.get("net", 0))),
+            "delivery": record.get("delivery", 0),
+            "amount": record.get("amount", record.get("price", record.get("net", 0))),
+        } for record in report_records if record.get("category") != "Task"]
+        report_html = build_html_report(report_records, st.session_state.budget, custom_title="CUSTOM PROJECT REPORT")
+        st.download_button("DOWNLOAD CUSTOM REPORT", report_html, file_name="custom_project_report.html", mime="text/html", use_container_width=True)
+
+    with tools_cleanup:
+        duplicate_groups = find_duplicate_records(searchable_records(st.session_state))
+        st.metric("Duplicate groups", len(duplicate_groups))
+        for group in duplicate_groups:
+            st.warning("Duplicate: " + " | ".join(str(item.get("name", item.get("item", item.get("description", "record")))) for item in group))
+        if duplicate_groups and st.button("REMOVE DUPLICATE RECORDS", use_container_width=True, key="remove_duplicates"):
+            seen = set()
+            for key in ("records", "labor_records", "payroll_expenses"):
+                kept = []
+                for record in st.session_state.get(key, []):
+                    signature = (record.get("type", key), str(record.get("name", record.get("item", record.get("description", "")))).strip().lower(), round(float(record.get("amount", record.get("price", record.get("net", 0))) or 0), 2), record.get("date", record.get("month", "")))
+                    if signature not in seen:
+                        seen.add(signature)
+                        kept.append(record)
+                st.session_state[key] = kept
+            persist_state()
+            st.success("Duplicate records removed; the first copy was kept.")
+            st.rerun()
+        st.markdown("#### DISPLAY")
+        dark_mode = st.toggle("Dark mode", value=st.session_state.dark_mode, key="dark_mode_toggle")
+        if dark_mode != st.session_state.dark_mode:
+            st.session_state.dark_mode = dark_mode
+            persist_state()
+            st.rerun()
+
+elif view == "update":
+    st.markdown("## Upgrade Center")
+    st.caption("Administrator-only signed release installation. The current app is backed up first.")
     admin_password = st.text_input("Administrator password", type="password", key="admin_update_password")
     uploaded_upgrade = st.file_uploader("Choose signed Python upgrade", type=["py"], key="upgrade_file")
     signature = st.text_input("Release SHA-256 HMAC signature", key="upgrade_signature")
@@ -2608,32 +2973,10 @@ elif view == "update":
             if not ADMIN_PASSWORD or not hmac.compare_digest(admin_password, ADMIN_PASSWORD):
                 raise ValueError("Administrator authentication failed.")
             backup_path = install_update(uploaded_upgrade, signature)
-            log_audit("Upgrade installed", f"Backup created at {backup_path}")
             st.success(f"Upgrade installed. Backup created at {os.path.basename(backup_path)}.")
             st.warning("Restart the Streamlit app to load the new version.")
         except ValueError as error:
-            log_audit("Upgrade failed", str(error))
             st.error(str(error))
-
-    st.divider()
-    st.subheader("Team Activity Log")
-    if st.session_state.audit_log:
-        st.dataframe(
-            [
-                {
-                    "Time": entry.get("timestamp", ""),
-                    "Role": entry.get("role", "admin").title(),
-                    "Event": entry.get("event", ""),
-                    "Details": entry.get("details", ""),
-                }
-                for entry in reversed(st.session_state.audit_log)
-            ],
-            use_container_width=True,
-            hide_index=True,
-        )
-    else:
-        st.info("No audit events have been recorded yet.")
-
     st.divider()
     st.subheader("Backups")
     backup_dir = os.path.join(APP_DIR, "backups")
