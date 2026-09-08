@@ -2,6 +2,9 @@ import os
 import time
 import base64
 import ast
+import subprocess
+import sys
+import importlib.util
 from io import BytesIO
 import operator
 import smtplib
@@ -243,8 +246,64 @@ def save_state(state):
     write_excel(state)
     write_separate_excel_files(state)
 
-APP_VERSION = "AILYN HOUSE"
+APP_VERSION = "AILYN HOUSE v2.1"
 APP_NAME = "AILYN HOUSE | Ailyn House Project"
+APP_BRAND_NAME = "AILYN HOUSE"
+APP_BRAND_SUBNAME = "PROJECT MANAGEMENT SYSTEM"
+APP_BRAND_PRIMARY = "#72f7b0"
+APP_BRAND_ACCENT = "#ffae8f"
+APP_BRAND_DEEP = "#071b12"
+APP_BRAND_PANEL = "rgba(10, 35, 25, 0.8)"
+APP_BRAND_SOFT = "#d9f9e8"
+REQUIRED_PACKAGES = [
+    "streamlit",
+    "pandas",
+    "numpy",
+    "openpyxl",
+    "PIL",
+    "pytesseract",
+    "dotenv",
+    "requests",
+]
+
+
+def get_missing_runtime_dependencies():
+    missing = []
+    for package in REQUIRED_PACKAGES:
+        module_name = package
+        if package == "PIL":
+            module_name = "PIL"
+        elif package == "dotenv":
+            module_name = "dotenv"
+        if importlib.util.find_spec(module_name) is None:
+            missing.append(package)
+    return missing
+
+
+def install_runtime_dependencies():
+    requirements_path = os.path.join(APP_DIR, "requirements.txt")
+    if not os.path.exists(requirements_path):
+        return False, f"Missing requirements file: {requirements_path}"
+    try:
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "-r", requirements_path],
+            cwd=APP_DIR,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return True, "Dependencies installed successfully."
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or "").strip() or (exc.stdout or "").strip() or str(exc)
+        return False, stderr
+
+
+SYSTEM_HEALTH = {
+    "app_version": APP_VERSION,
+    "missing_dependencies": get_missing_runtime_dependencies(),
+    "ocr_ready": pytesseract is not None,
+    "streamlit_ready": importlib.util.find_spec("streamlit") is not None,
+}
 
 # ================================================================
 # Construction/Materials, Payroll, and Schedule are intentionally unified.
@@ -1517,10 +1576,10 @@ with st.sidebar:
     st.markdown(f"""
     <div class="sidebar-brand">
       <div class="brand-row">
-        <img class="brand-logo" src="{AILYN_LOGO_DATA}" alt="Ailyn Construction Logo">
+        <img class="brand-logo" src="{AILYN_LOGO_DATA}" alt="Ailyn House Logo">
         <div class="brand-copy">
-        <div class="brand-title"><span>AILYN HOUSE</span><span>PROJECT</span></div>
-          <div class="brand-sub">Official Project Control</div>
+          <div class="brand-title"><span>{APP_BRAND_NAME}</span><span>PROJECT</span></div>
+          <div class="brand-sub">{APP_BRAND_SUBNAME}</div>
         </div>
       </div>
     </div>
@@ -1530,6 +1589,27 @@ with st.sidebar:
         f"{manila_now().strftime('%I:%M %p  |  %b %d')}</div>",
         unsafe_allow_html=True
     )
+
+    st.markdown("<div class='sidebar-section-label'>SYSTEM STATUS</div>", unsafe_allow_html=True)
+    missing_deps = get_missing_runtime_dependencies()
+    status_color = "#79f7b0" if not missing_deps else "#ffb26b"
+    st.markdown(
+        f"<div class='sidebar-status-box' style='border:1px solid {status_color}; padding:10px 12px; border-radius:12px; background:rgba(10,20,15,.35); margin-bottom:8px;'>"
+        f"<div style='font-size:10px; letter-spacing:.12em; color:{status_color}; text-transform:uppercase;'>APP VERSION</div>"
+        f"<div style='font-size:15px; font-weight:800; margin-top:6px;'>{APP_VERSION}</div>"
+        f"<div style='font-size:11px; color:#dfece4; margin-top:6px;'>Dependencies: {'OK' if not missing_deps else f'{len(missing_deps)} missing'}</div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+    if missing_deps:
+        st.warning(f"Missing runtime packages: {', '.join(missing_deps)}")
+        if st.button("INSTALL DEPENDENCIES", use_container_width=True, key="install_deps_sidebar"):
+            ok, message = install_runtime_dependencies()
+            if ok:
+                st.success(message)
+                st.rerun()
+            else:
+                st.error(message)
 
     st.markdown("<div class='sidebar-section-label'>PROJECT OVERVIEW</div>", unsafe_allow_html=True)
     if st.button("📊 DASHBOARD", use_container_width=True, key="side_dashboard"):
@@ -1605,13 +1685,20 @@ if view == "home":
 
     st.markdown(f"""
     <div class="dashboard-heading">
-    <img src="{AILYN_LOGO_DATA}" alt="Ailyn Construction Logo">
-      <div>
-        <div class="dashboard-heading-title">AILYN HOUSE PROJECT</div>
-        <div class="dashboard-heading-sub">PROJECT MANAGEMENT SYSTEM</div>
+      <div class="dashboard-brand-row">
+        <img src="{AILYN_LOGO_DATA}" alt="Ailyn House Logo">
+        <div>
+          <div class="dashboard-heading-title">{APP_BRAND_NAME}</div>
+          <div class="dashboard-heading-sub">{APP_BRAND_SUBNAME}</div>
+        </div>
       </div>
     </div>
-    <div class="dashboard-welcome">🛡️ &nbsp; Welcome back, <b>{st.session_state.project.get("name", "Ailyn House Project")}</b> &nbsp;|&nbsp; Manage your construction project efficiently.</div>
+    <div class="dashboard-status-bar">
+      <div class="dashboard-status-chip">System Online</div>
+      <div class="dashboard-status-chip accent">Brand Protected</div>
+      <div class="dashboard-status-chip">{APP_VERSION}</div>
+    </div>
+    <div class="dashboard-welcome">🛡️ &nbsp; Welcome back, <b>{st.session_state.project.get("name", "Ailyn House Project")}</b> &nbsp;|&nbsp; Manage your construction project with a premium operational dashboard.</div>
     """, unsafe_allow_html=True)
     project = st.session_state.project
     if project.get("client") or project.get("address") or project.get("target_date"):
@@ -2415,7 +2502,23 @@ elif view == "receipt_archive":
 
 elif view == "update":
     st.markdown("## Upgrade Center")
-    st.caption("Administrator-only signed release installation. The current app is backed up first.")
+    st.caption("System health, dependency checks, and signed app installation.")
+    st.markdown(f"**Current version:** {APP_VERSION}")
+    missing_deps = get_missing_runtime_dependencies()
+    if missing_deps:
+        st.warning(f"Required runtime packages are missing: {', '.join(missing_deps)}")
+    else:
+        st.success("All required runtime packages are available.")
+
+    if st.button("INSTALL REQUIRED DEPENDENCIES", use_container_width=True, key="upgrade_install_deps"):
+        ok, message = install_runtime_dependencies()
+        if ok:
+            st.success(message)
+            st.rerun()
+        else:
+            st.error(message)
+
+    st.divider()
     admin_password = st.text_input("Administrator password", type="password", key="admin_update_password")
     uploaded_upgrade = st.file_uploader("Choose signed Python upgrade", type=["py"], key="upgrade_file")
     signature = st.text_input("Release SHA-256 HMAC signature", key="upgrade_signature")
