@@ -349,45 +349,6 @@ def set_view(v):
     st.rerun()
 
 
-def total_materials():
-    return sum(r["amount"] for r in st.session_state.records if r["type"] == "material")
-
-
-def total_expenses():
-    return sum(r["amount"] for r in st.session_state.records if r["type"] == "expense")
-
-
-def total_excess():
-    return sum(r["amount"] for r in st.session_state.records if r["type"] == "excess")
-
-
-def get_total():
-    return total_materials() + total_expenses()
-
-
-def get_balance():
-    return float(st.session_state.budget) - total_excess() - get_total()
-
-
-def monthly_spend(month=None):
-    month = month or manila_now().strftime("%Y-%m")
-    construction = sum(
-        float(record.get("amount", 0)) for record in st.session_state.records
-        if record.get("type") in {"material", "expense"} and month_key(record) == month
-    )
-    labor = sum(float(record.get("net", 0)) for record in st.session_state.labor_records if month_key(record) == month)
-    payroll_expenses = sum(float(record.get("price", 0)) for record in st.session_state.payroll_expenses if month_key(record) == month)
-    return construction + labor + payroll_expenses
-
-
-def monthly_construction_spend(month=None):
-    month = month or manila_now().strftime("%Y-%m")
-    return sum(
-        float(record.get("amount", 0)) for record in st.session_state.records
-        if record.get("type") in {"material", "expense"} and month_key(record) == month
-    )
-
-
 # ================================================================
 # COMBINED MAIN RECEIPTS — FINANCIAL REPORT + PAYROLL REPORT
 # Copied from the MAIN receipt implementation.
@@ -779,13 +740,91 @@ def persist_state():
 
 
 def total_materials():
-            except TESSERACT_NOT_FOUND_ERROR:
-                st.session_state.scanned_photo_text = "OCR is unavailable. Install Tesseract OCR on the server."
-            except RuntimeError as error:
-                st.session_state.scanned_photo_text = str(error)
-            except (OSError, ValueError):
-                st.session_state.scanned_photo_text = "The photo could not be read. Try taking it again."
-            st.session_state.scanned_photo_hash = photo_hash
+    return sum(float(r.get("amount", 0)) for r in st.session_state.records if r.get("type") == "material")
+
+
+def total_expenses():
+    return sum(float(r.get("amount", 0)) for r in st.session_state.records if r.get("type") == "expense")
+
+
+def total_excess():
+    return sum(float(r.get("amount", 0)) for r in st.session_state.records if r.get("type") == "excess")
+
+
+def get_total():
+    return total_materials() + total_expenses()
+
+
+def get_balance():
+    return float(st.session_state.budget) - total_excess() - get_total()
+
+
+def monthly_spend(month=None):
+    month = month or manila_now().strftime("%Y-%m")
+    construction = sum(
+        float(record.get("amount", 0)) for record in st.session_state.records
+        if record.get("type") in {"material", "expense"} and month_key(record) == month
+    )
+    labor = sum(float(record.get("net", 0)) for record in st.session_state.labor_records if month_key(record) == month)
+    payroll_expenses = sum(float(record.get("price", 0)) for record in st.session_state.payroll_expenses if month_key(record) == month)
+    return construction + labor + payroll_expenses
+
+
+def monthly_construction_spend(month=None):
+    month = month or manila_now().strftime("%Y-%m")
+    return sum(
+        float(record.get("amount", 0)) for record in st.session_state.records
+        if record.get("type") in {"material", "expense"} and month_key(record) == month
+    )
+
+
+@st.dialog("Project Details", width="large")
+def project_settings_dialog():
+    project = st.session_state.project
+    statuses = ["Active", "Planning", "Paused", "Completed"]
+    with st.form("project_details_form"):
+        project_name = st.text_input("Project name", value=project.get("name", "Ailyn House Project"))
+        client_name = st.text_input("Client name", value=project.get("client", ""))
+        project_address = st.text_input("Project address", value=project.get("address", ""))
+        project_manager = st.text_input("Project manager", value=project.get("manager", ""))
+        project_status = st.selectbox("Status", statuses, index=statuses.index(project.get("status", "Active")) if project.get("status") in statuses else 0)
+        target_date_value = project.get("target_date")
+        target_date = st.date_input(
+            "Target date",
+            value=datetime.strptime(target_date_value, "%Y-%m-%d").date() if target_date_value else datetime.now(PHILIPPINES_TZ).date(),
+        )
+        submitted = st.form_submit_button("Save project details", use_container_width=True)
+    if submitted:
+        st.session_state.project = {
+            "name": project_name,
+            "client": client_name,
+            "address": project_address,
+            "manager": project_manager,
+            "status": project_status,
+            "target_date": target_date.isoformat(),
+        }
+        persist_state()
+        st.success("Project details updated.")
+
+
+@st.dialog("Photo Scanner", width="large")
+def photo_scanner_dialog():
+    photo_category = st.selectbox("Photo category", ["Material", "Expense"], index=0, key="photo_category_select")
+    uploaded_photo = st.file_uploader("Upload or capture a receipt photo", type=["png", "jpg", "jpeg", "webp"], key=f"receipt_photo_upload_{st.session_state.get('scanner_input_version', 0)}")
+
+    if uploaded_photo is not None:
+        try:
+            processed_bytes = normalize_photo_bytes(uploaded_photo.getvalue(), uploaded_photo.type or "image/jpeg")
+            st.session_state.scanned_photo_bytes = processed_bytes[0]
+            st.session_state.scanned_photo_mime = processed_bytes[1]
+            st.session_state.scanned_photo_hash = hashlib.sha256(processed_bytes[0]).hexdigest()
+            st.session_state.scanned_photo_text = scan_photo_text(type("Photo", (), {"getvalue": lambda self: processed_bytes[0]})())
+        except TESSERACT_NOT_FOUND_ERROR:
+            st.session_state.scanned_photo_text = "OCR is unavailable. Install Tesseract OCR on the server."
+        except RuntimeError as error:
+            st.session_state.scanned_photo_text = str(error)
+        except (OSError, ValueError):
+            st.session_state.scanned_photo_text = "The photo could not be read. Try taking it again."
 
     if st.session_state.get("scanned_photo_bytes"):
         view_col, delete_col = st.columns(2)
@@ -808,8 +847,10 @@ def total_materials():
                 st.session_state.scanned_photo_text = ""
                 st.session_state.scanner_input_version += 1
                 st.rerun()
+
         if st.session_state.get("show_scanned_photo"):
             st.image(st.session_state.scanned_photo_bytes, caption="Captured photo", use_container_width=True)
+
         save_col, retake_col = st.columns(2)
         with save_col:
             if st.button("SAVE FILE", use_container_width=True, key="modal_save_photo"):
@@ -817,11 +858,18 @@ def total_materials():
                 if not any(photo.get("hash") == photo_hash for photo in st.session_state.scanner_photos):
                     photo_id = str(uuid.uuid4())
                     relative_path = save_scanner_photo(st.session_state.scanned_photo_bytes, st.session_state.get("scanned_photo_mime", "image/jpeg"), photo_id)
-                    st.session_state.scanner_photos.append({"id": photo_id, "hash": photo_hash, "file": relative_path, "tag": photo_category, "saved_at": manila_now().isoformat()})
+                    st.session_state.scanner_photos.append({
+                        "id": photo_id,
+                        "hash": photo_hash,
+                        "file": relative_path,
+                        "tag": photo_category,
+                        "saved_at": manila_now().isoformat(),
+                    })
                     persist_state()
                     st.success("Photo saved to the project archive.")
                 else:
                     st.info("This photo is already saved.")
+
         with retake_col:
             if st.button("RETAKE", use_container_width=True, key="modal_retake_photo"):
                 st.session_state.scanned_photo_bytes = None
@@ -830,6 +878,7 @@ def total_materials():
                 st.session_state.show_scanned_photo = False
                 st.session_state.scanner_input_version += 1
                 st.rerun()
+
         scanned_text = st.session_state.get("scanned_photo_text", "")
         if scanned_text:
             if scanned_text.startswith("OCR is unavailable") or scanned_text.startswith("The photo could not be read"):
@@ -869,14 +918,17 @@ def total_materials():
                         )
                         if saved:
                             st.success("Receipt saved to the Excel ledger.")
+
             with st.expander("View scanned text", expanded=False):
                 st.text_area("Recognized text", value=scanned_text, height=120, key="modal_scanned_text", disabled=True, label_visibility="collapsed")
+
             if not scanned_text.startswith("OCR is unavailable") and not scanned_text.startswith("The photo could not be read") and st.button("USE SCAN IN MATERIAL ENTRY", use_container_width=True, key="modal_use_scanned_material"):
                 st.session_state.material_name = scanned_fields["name"]
                 st.session_state.material_price = scanned_fields["price"] or None
                 st.session_state.material_qty = scanned_fields["qty"]
                 st.session_state.material_delivery = scanned_fields["delivery"] or None
                 set_view("material")
+
     if st.button("CLOSE CAMERA", use_container_width=True, key="close_photo_dialog"):
         st.session_state.scanner_open = False
         st.session_state.show_scanned_photo = False
