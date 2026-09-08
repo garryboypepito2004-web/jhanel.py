@@ -112,6 +112,8 @@ PERSISTENT_KEYS = [
     "project",
     "scanner_photos",
     "dark_mode",
+    "user_role",
+    "audit_log",
 ]
 
 def load_state():
@@ -245,6 +247,25 @@ def save_state(state):
     data = save_sqlite_state(state)
     write_excel(state)
     write_separate_excel_files(state)
+
+
+def log_audit(event, details=""):
+    timestamp = manila_now().strftime("%Y-%m-%d %H:%M:%S")
+    st.session_state.setdefault("audit_log", [])
+    st.session_state.audit_log.append({
+        "timestamp": timestamp,
+        "event": event,
+        "details": details,
+        "role": st.session_state.get("user_role", "admin"),
+    })
+    if len(st.session_state.audit_log) > 25:
+        st.session_state.audit_log = st.session_state.audit_log[-25:]
+    persist_state()
+
+
+def has_admin_access():
+    return str(st.session_state.get("user_role", "admin")).lower() == "admin"
+
 
 APP_VERSION = "AILYN HOUSE v2.1"
 APP_NAME = "AILYN HOUSE | Ailyn House Project"
@@ -393,6 +414,15 @@ if "scanner_camera_mode" not in st.session_state:
     st.session_state.scanner_camera_mode = "Back camera"
 if "dark_mode" not in st.session_state:
     st.session_state.dark_mode = False
+if "user_role" not in st.session_state:
+    st.session_state.user_role = "admin"
+if "audit_log" not in st.session_state:
+    st.session_state.audit_log = [{
+        "timestamp": manila_now().strftime("%Y-%m-%d %H:%M:%S"),
+        "event": "System initialized",
+        "details": "Ailyn House project system started successfully.",
+        "role": "admin",
+    }]
 if not os.path.exists(EXCEL_FILE):
     write_excel(st.session_state)
 if not os.path.exists(MATERIALS_EXCEL_FILE) or not os.path.exists(LABOR_EXCEL_FILE):
@@ -832,6 +862,9 @@ def clear_all():
 
 def persist_state():
     save_state(st.session_state)
+
+
+log_audit("Session loaded", f"User role: {st.session_state.get('user_role', 'admin')}")
 
 
 def total_materials():
@@ -1664,7 +1697,12 @@ with st.sidebar:
 
     st.markdown("<div class='sidebar-section-label'>ADMINISTRATION</div>", unsafe_allow_html=True)
     if st.button("🔐 ADMIN CONSOLE", use_container_width=True, key="side_admin"):
-        set_view("update")
+        if has_admin_access():
+            set_view("update")
+        else:
+            st.session_state.view = "update"
+            st.warning("Admin access required. Please switch user role to Admin in the management console.")
+            st.rerun()
 
 view = st.session_state.view
 
@@ -2501,9 +2539,48 @@ elif view == "receipt_archive":
                     st.rerun()
 
 elif view == "update":
-    st.markdown("## Upgrade Center")
+    st.markdown("## Administration Console")
+    st.caption("Ailyn House operational security, system health, role control, and upgrade center.")
+
+    if not has_admin_access():
+        st.warning("Current user role is not Administrator. Switch to Admin to unlock system actions.")
+        with st.form("role_access_form"):
+            selected_role = st.selectbox("User role", ["Operator", "Admin"], index=1 if st.session_state.get("user_role") == "admin" else 0)
+            if st.form_submit_button("SAVE ROLE"):
+                st.session_state.user_role = selected_role.lower()
+                log_audit("Role changed", f"Access role updated to {selected_role}")
+                st.success(f"Role saved as {selected_role}.")
+                st.rerun()
+        st.stop()
+
+    user_role = st.session_state.get("user_role", "admin")
+    st.markdown(f"**Current access role:** {user_role.title()}")
+
+    role_col, status_col = st.columns(2)
+    with role_col:
+        user_role_choice = st.selectbox("Management role", ["Admin", "Operator"], index=0 if user_role.lower() == "admin" else 1, key="system_user_role_select")
+        if st.button("APPLY ROLE", use_container_width=True):
+            st.session_state.user_role = user_role_choice.lower()
+            log_audit("Role changed", f"Access role updated to {user_role_choice}")
+            st.success(f"Access role changed to {user_role_choice}.")
+            st.rerun()
+    with status_col:
+        st.metric("System health", "ONLINE" if not get_missing_runtime_dependencies() else "WARN")
+
+    st.subheader("System Overview")
+    overview_cols = st.columns(4)
+    with overview_cols[0]:
+        st.metric("App version", APP_VERSION)
+    with overview_cols[1]:
+        st.metric("Dependencies", "OK" if not get_missing_runtime_dependencies() else f"{len(get_missing_runtime_dependencies())} missing")
+    with overview_cols[2]:
+        st.metric("Active records", len(st.session_state.records))
+    with overview_cols[3]:
+        st.metric("Audit log", len(st.session_state.audit_log))
+
+    st.divider()
+    st.markdown("### Upgrade Center")
     st.caption("System health, dependency checks, and signed app installation.")
-    st.markdown(f"**Current version:** {APP_VERSION}")
     missing_deps = get_missing_runtime_dependencies()
     if missing_deps:
         st.warning(f"Required runtime packages are missing: {', '.join(missing_deps)}")
@@ -2513,9 +2590,11 @@ elif view == "update":
     if st.button("INSTALL REQUIRED DEPENDENCIES", use_container_width=True, key="upgrade_install_deps"):
         ok, message = install_runtime_dependencies()
         if ok:
+            log_audit("Dependency install", message)
             st.success(message)
             st.rerun()
         else:
+            log_audit("Dependency install failed", message)
             st.error(message)
 
     st.divider()
@@ -2529,10 +2608,32 @@ elif view == "update":
             if not ADMIN_PASSWORD or not hmac.compare_digest(admin_password, ADMIN_PASSWORD):
                 raise ValueError("Administrator authentication failed.")
             backup_path = install_update(uploaded_upgrade, signature)
+            log_audit("Upgrade installed", f"Backup created at {backup_path}")
             st.success(f"Upgrade installed. Backup created at {os.path.basename(backup_path)}.")
             st.warning("Restart the Streamlit app to load the new version.")
         except ValueError as error:
+            log_audit("Upgrade failed", str(error))
             st.error(str(error))
+
+    st.divider()
+    st.subheader("Team Activity Log")
+    if st.session_state.audit_log:
+        st.dataframe(
+            [
+                {
+                    "Time": entry.get("timestamp", ""),
+                    "Role": entry.get("role", "admin").title(),
+                    "Event": entry.get("event", ""),
+                    "Details": entry.get("details", ""),
+                }
+                for entry in reversed(st.session_state.audit_log)
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.info("No audit events have been recorded yet.")
+
     st.divider()
     st.subheader("Backups")
     backup_dir = os.path.join(APP_DIR, "backups")
