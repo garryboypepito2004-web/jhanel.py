@@ -112,7 +112,6 @@ PERSISTENT_KEYS = [
     "client_notes",
     "app_settings",
     "messages",
-    "ui_theme",
 ]
 
 def load_state():
@@ -312,10 +311,10 @@ if "remaining_money" not in st.session_state:
 if "view" not in st.session_state:
     st.session_state.view = "home"
 if st.session_state.view not in {
-    "home", "payroll_dashboard", "planner_input", "planner_output", "material",
+    "home", "payroll_dashboard", "material_dashboard", "planner_input", "planner_output", "material",
     "expense", "excess", "ledger", "add_labor", "add_payroll_expense",
     "payroll_remaining", "payroll_ledger", "export", "payroll_export",
-    "receipt_archive", "update",
+    "receipt_archive", "monthly_close", "update",
 }:
     st.session_state.view = "home"
 if "selected_role" not in st.session_state:
@@ -338,34 +337,10 @@ if "scanner_camera_mode" not in st.session_state:
     st.session_state.scanner_camera_mode = "Back camera"
 if "dark_mode" not in st.session_state:
     st.session_state.dark_mode = False
-if "ui_theme" not in st.session_state:
-    st.session_state.ui_theme = "normal"
 if not os.path.exists(EXCEL_FILE):
     write_excel(st.session_state)
 if not os.path.exists(MATERIALS_EXCEL_FILE) or not os.path.exists(LABOR_EXCEL_FILE):
     write_separate_excel_files(st.session_state)
-
-
-# ----------------------------------------------------------------
-# RESPONSIVE SIDEBAR CONTROL
-# Compact / Wide presets + CSS drag-friendly layout.
-# The Streamlit sidebar can also be dragged from its right edge in
-# browsers that expose the native sidebar resize handle.
-# ----------------------------------------------------------------
-if "sidebar_mode" not in st.session_state:
-    st.session_state.sidebar_mode = "wide"
-
-def set_sidebar_mode(mode):
-    st.session_state.sidebar_mode = mode
-    st.rerun()
-
-
-def set_ui_theme(theme):
-    st.session_state.ui_theme = theme
-    # Keep the legacy flag synchronized for older parts of the app.
-    st.session_state.dark_mode = theme in {"dark", "contrast"}
-    persist_state()
-    st.rerun()
 
 
 def set_view(v):
@@ -2152,160 +2127,274 @@ section[data-testid="stSidebar"] > div {
 </style>
 """, unsafe_allow_html=True)
 
-# Responsive / resizable sidebar styling
-sidebar_mode = st.session_state.get("sidebar_mode", "wide")
-sidebar_width = "360px" if sidebar_mode == "wide" else "230px"
-sidebar_min = "230px" if sidebar_mode == "wide" else "190px"
-sidebar_max = "520px"
-
-st.markdown(f"""
+# ================================================================
+# RESIZABLE SIDEBAR — drag the RIGHT EDGE (no resize button needed)
+# ================================================================
+st.markdown("""
 <style>
-/* Sidebar width presets. The right edge remains available for native drag resizing. */
-section[data-testid="stSidebar"] {{
-    width: {sidebar_width} !important;
-    min-width: {sidebar_min} !important;
-    max-width: {sidebar_max} !important;
-    transition: width .22s ease, min-width .22s ease;
-}}
-section[data-testid="stSidebar"] > div {{
+/* The sidebar width is controlled by --ailyn-sidebar-width. */
+:root { --ailyn-sidebar-width: 320px; }
+section[data-testid="stSidebar"] {
+    width: var(--ailyn-sidebar-width) !important;
+    min-width: var(--ailyn-sidebar-width) !important;
+    max-width: var(--ailyn-sidebar-width) !important;
+    transition: width .08s linear, min-width .08s linear, max-width .08s linear !important;
+    overflow: visible !important;
+    z-index: 1000 !important;
+}
+section[data-testid="stSidebar"] > div {
     width: 100% !important;
     min-width: 0 !important;
-}}
-/* Keep the dashboard from leaving a dead/empty strip when the sidebar is compact. */
-[data-testid="stAppViewContainer"] > .main {{
-    transition: margin-left .22s ease, width .22s ease;
-}}
-.sidebar-resize-note {{
-    margin: 4px 3px 12px;
-    padding: 8px 10px;
-    border: 1px solid rgba(114,247,176,.13);
-    border-radius: 10px;
-    background: rgba(114,247,176,.045);
-    color: #91cbaa !important;
-    font-size: 8px;
-    line-height: 1.35;
-    letter-spacing: .06em;
-    text-transform: uppercase;
-}}
-.sidebar-size-row {{
-    display: flex;
-    gap: 6px;
-    margin: 4px 0 10px;
-}}
-.sidebar-size-row span {{
-    flex: 1;
-    text-align: center;
-    padding: 6px 4px;
-    border: 1px solid rgba(114,247,176,.12);
-    border-radius: 9px;
-    color: #8feeb2 !important;
-    font-size: 8px;
-    font-weight: 800;
-    letter-spacing: .08em;
-}}
-@media (max-width: 900px) {{
-    section[data-testid="stSidebar"] {{
-        min-width: 210px !important;
-    }}
-}}
+    max-width: none !important;
+}
+/* Visible high-contrast drag strip on the sidebar's right edge. */
+section[data-testid="stSidebar"]::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: -5px;
+    width: 10px;
+    height: 100%;
+    cursor: ew-resize;
+    background: linear-gradient(90deg, transparent 0%, rgba(114,247,176,.16) 35%, rgba(255,255,255,.72) 50%, rgba(114,247,176,.16) 65%, transparent 100%);
+    border-right: 1px solid rgba(255,255,255,.75);
+    box-shadow: 0 0 12px rgba(114,247,176,.35);
+    opacity: .9;
+}
+section[data-testid="stSidebar"]::before {
+    content: "";
+    position: absolute;
+    z-index: 2;
+    right: -3px;
+    top: 50%;
+    width: 6px;
+    height: 72px;
+    transform: translateY(-50%);
+    border-radius: 8px;
+    background: repeating-linear-gradient(to bottom, #ffffff 0 4px, transparent 4px 9px);
+    pointer-events: none;
+    filter: drop-shadow(0 0 5px rgba(114,247,176,.7));
+}
+body.ailyn-resizing, body.ailyn-resizing * { cursor: ew-resize !important; user-select: none !important; }
+/* Keep the main area fluid while the sidebar is dragged. */
+[data-testid="stAppViewContainer"] > .main { min-width: 0 !important; }
+@media (max-width: 800px) {
+    :root { --ailyn-sidebar-width: 285px; }
+    section[data-testid="stSidebar"] { max-width: min(var(--ailyn-sidebar-width), 86vw) !important; min-width: min(var(--ailyn-sidebar-width), 86vw) !important; width: min(var(--ailyn-sidebar-width), 86vw) !important; }
+}
+</style>
+<script>
+(function () {
+  const MIN = 235, MAX = 520, DEFAULT = 320;
+  const root = document.documentElement;
+  let dragging = false;
+
+  function sidebar() { return document.querySelector('section[data-testid="stSidebar"]'); }
+  function setWidth(px, save=true) {
+    px = Math.max(MIN, Math.min(MAX, Math.round(px)));
+    root.style.setProperty('--ailyn-sidebar-width', px + 'px');
+    if (save) { try { localStorage.setItem('ailyn_sidebar_width', String(px)); } catch(e) {} }
+  }
+  function restore() {
+    let w = DEFAULT;
+    try { w = parseInt(localStorage.getItem('ailyn_sidebar_width') || DEFAULT, 10); } catch(e) {}
+    setWidth(Number.isFinite(w) ? w : DEFAULT, false);
+  }
+
+  function bind() {
+    const sb = sidebar();
+    if (!sb || sb.dataset.ailynResizeBound === '1') return;
+    sb.dataset.ailynResizeBound = '1';
+    sb.addEventListener('mousedown', function(e) {
+      const r = sb.getBoundingClientRect();
+      /* Only the last 14px of the sidebar is the drag zone. */
+      if (e.clientX < r.right - 14) return;
+      dragging = true;
+      document.body.classList.add('ailyn-resizing');
+      e.preventDefault();
+    });
+  }
+
+  document.addEventListener('mousemove', function(e) {
+    if (!dragging) return;
+    setWidth(e.clientX);
+  });
+  document.addEventListener('mouseup', function() {
+    if (!dragging) return;
+    dragging = false;
+    document.body.classList.remove('ailyn-resizing');
+  });
+  window.addEventListener('resize', bind);
+  restore();
+  bind();
+  const observer = new MutationObserver(bind);
+  observer.observe(document.body, {childList:true, subtree:true});
+})();
+</script>
+""", unsafe_allow_html=True)
+
+# === CLIENT DRAGGABLE SIDEBAR — FINAL FIX ===
+# This block changes sidebar geometry only. The existing project background,
+# images, colors, logo, and theme are intentionally untouched.
+st.markdown("""
+<style>
+section[data-testid="stSidebar"] {
+    --ailyn-sidebar-width: 340px;
+    width: var(--ailyn-sidebar-width) !important;
+    min-width: 230px !important;
+    max-width: 560px !important;
+    box-sizing: border-box !important;
+    overflow: visible !important;
+    transition: width .04s linear !important;
+}
+section[data-testid="stSidebar"] > div,
+section[data-testid="stSidebar"] [data-testid="stSidebarContent"] {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+}
+/* Wide invisible hit area + sharp visible edge. */
+section[data-testid="stSidebar"]::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: -10px;
+    width: 20px;
+    height: 100%;
+    cursor: ew-resize;
+    z-index: 2147483646;
+    background: transparent;
+}
+section[data-testid="stSidebar"]::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    right: -3px;
+    width: 5px;
+    height: 92px;
+    transform: translateY(-50%);
+    border-radius: 3px;
+    background: #ffffff;
+    border: 1px solid #06130b;
+    box-shadow: 0 0 0 1px #8fffc1, 0 0 16px rgba(143,255,193,.95);
+    pointer-events: none;
+    z-index: 2147483647;
+}
+html.ailyn-resizing, html.ailyn-resizing * {
+    cursor: ew-resize !important;
+    user-select: none !important;
+}
+/* When collapsed, do not leave our width behind. */
+section[data-testid="stSidebar"][aria-expanded="false"] {
+    width: 0 !important;
+    min-width: 0 !important;
+    max-width: 0 !important;
+    border-right: 0 !important;
+    box-shadow: none !important;
+}
+section[data-testid="stSidebar"][aria-expanded="false"]::before,
+section[data-testid="stSidebar"][aria-expanded="false"]::after { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# Theme class is applied to the app root using a small marker element.
-st.markdown(f"""
-<style>
-/* ================================================================
-   CLIENT IDENTITY + FOUR DISPLAY MODES
-   low = softer/dimmer, normal = balanced, dark = deep dark,
-   contrast = sharp high-contrast text and image presentation.
-   ================================================================ */
-.sidebar-client-card {{
-    margin: 8px 2px 14px;
-    padding: 15px 14px;
-    border-radius: 18px;
-    background: linear-gradient(145deg, rgba(18,108,63,.62), rgba(2,25,15,.72));
-    border: 1px solid rgba(151,255,196,.34);
-    box-shadow: 0 12px 30px rgba(0,0,0,.34), inset 0 1px 0 rgba(255,255,255,.10);
-}}
-.sidebar-client-kicker {{
-    color:#86f5b2 !important; font-size:8px; font-weight:900;
-    letter-spacing:.16em; text-transform:uppercase;
-}}
-.sidebar-client-name {{
-    margin-top:5px; color:#ffffff !important; font-size:18px;
-    font-weight:950; letter-spacing:.035em; line-height:1.12;
-    overflow-wrap:anywhere;
-}}
-.sidebar-client-project {{
-    margin-top:6px; color:#c4ecd4 !important; font-size:9px;
-    font-weight:800; letter-spacing:.07em; line-height:1.35;
-    overflow-wrap:anywhere;
-}}
-.sidebar-client-status {{
-    display:inline-block; margin-top:9px; padding:5px 8px;
-    border-radius:8px; background:rgba(114,247,176,.10);
-    color:#9dffc0 !important; font-size:8px; font-weight:900;
-    letter-spacing:.10em;
-}}
-.sidebar-client-status span {{ color:#52f39a !important; }}
-.sidebar-theme-title {{
-    margin:14px 5px 7px; color:#72f7b0 !important;
-    font-size:9px; font-weight:900; letter-spacing:.15em;
-    text-transform:uppercase;
-}}
-/* Theme engine: the marker controls the whole application. */
-body:has(.ui-theme-low) .stApp {{
-    filter: brightness(.82) saturate(.92);
-}}
-body:has(.ui-theme-normal) .stApp {{
-    filter: brightness(1) saturate(1);
-}}
-body:has(.ui-theme-dark) .stApp {{
-    filter: brightness(.72) saturate(.90);
-}}
-body:has(.ui-theme-contrast) .stApp {{
-    filter: brightness(.96) contrast(1.12) saturate(1.08);
-}}
-body:has(.ui-theme-low) [data-testid="stSidebar"] {{
-    opacity:.90;
-}}
-body:has(.ui-theme-normal) [data-testid="stSidebar"] {{
-    opacity:1;
-}}
-body:has(.ui-theme-dark) [data-testid="stSidebar"] {{
-    opacity:.96;
-}}
-body:has(.ui-theme-contrast) [data-testid="stSidebar"] {{
-    opacity:1;
-}}
-/* Sharper image/background quality without changing source resolution. */
-body:has(.ui-theme-contrast) .stApp {{
-    image-rendering:auto;
-}}
-body:has(.ui-theme-contrast) .stApp {{
-    background-image:
-      linear-gradient(115deg, rgba(0,8,4,.18), rgba(0,20,10,.25)),
-      url("https://images.unsplash.com/photo-1600585154340-be6161a56a0c") !important;
-    background-size:cover !important;
-    background-position:center center !important;
-    background-attachment:fixed !important;
-}}
-/* Make the contrast mode crisp instead of washed-out glass. */
-body:has(.ui-theme-contrast) .dash-section,
-body:has(.ui-theme-contrast) [data-testid="stMetric"],
-body:has(.ui-theme-contrast) .integrated-item,
-body:has(.ui-theme-contrast) .integrated-total {{
-    border-color:rgba(180,255,210,.42) !important;
-    box-shadow:0 12px 30px rgba(0,0,0,.38), inset 0 1px 0 rgba(255,255,255,.16) !important;
-}}
-body:has(.ui-theme-contrast) .dashboard-heading-title,
-body:has(.ui-theme-contrast) .section-title,
-body:has(.ui-theme-contrast) [data-testid="stMetricValue"] {{
-    text-shadow:0 2px 10px rgba(0,0,0,.75) !important;
-}}
-</style>
-<div class="ui-theme-{st.session_state.get("ui_theme","normal")}" aria-hidden="true"></div>
-""", unsafe_allow_html=True)
+# Streamlit can sanitize scripts placed in markdown. st.components.v1.html gives
+# the resize handler an actual browser execution context and lets it target the
+# parent Streamlit document.
+st.components.v1.html("""
+<script>
+(function () {
+  const MIN = 230, MAX = 560, DEFAULT = 340, KEY = 'ailyn_sidebar_width_v3';
+  let sidebar = null, dragging = false, startX = 0, startWidth = DEFAULT;
+
+  function doc() {
+    try { return window.parent.document; } catch (e) { return null; }
+  }
+  function getSidebar() {
+    const d = doc();
+    return d ? d.querySelector('section[data-testid="stSidebar"]') : null;
+  }
+  function isCollapsed(el) { return !el || el.getAttribute('aria-expanded') === 'false'; }
+  function clamp(n) { return Math.max(MIN, Math.min(MAX, Math.round(n))); }
+  function readSaved() {
+    try {
+      const n = Number(window.parent.localStorage.getItem(KEY));
+      return Number.isFinite(n) ? clamp(n) : DEFAULT;
+    } catch (e) { return DEFAULT; }
+  }
+  function applyWidth(n, save) {
+    sidebar = getSidebar();
+    if (!sidebar || isCollapsed(sidebar)) return;
+    const w = clamp(n);
+    const d = doc();
+    d.documentElement.style.setProperty('--ailyn-sidebar-width', w + 'px');
+    sidebar.style.setProperty('width', w + 'px', 'important');
+    sidebar.style.setProperty('min-width', w + 'px', 'important');
+    sidebar.style.setProperty('max-width', w + 'px', 'important');
+    if (save) {
+      try { window.parent.localStorage.setItem(KEY, String(w)); } catch (e) {}
+    }
+  }
+  function onDown(e) {
+    sidebar = getSidebar();
+    if (!sidebar || isCollapsed(sidebar)) return;
+    const r = sidebar.getBoundingClientRect();
+    if (e.clientX < r.right - 14 || e.clientX > r.right + 14) return;
+    dragging = true;
+    startX = e.clientX;
+    startWidth = r.width;
+    const d = doc();
+    d.documentElement.classList.add('ailyn-resizing');
+    e.preventDefault();
+    e.stopPropagation();
+  }
+  function onMove(e) {
+    if (!dragging) return;
+    applyWidth(startWidth + (e.clientX - startX), true);
+    e.preventDefault();
+  }
+  function onUp() {
+    if (!dragging) return;
+    dragging = false;
+    const d = doc();
+    if (d) d.documentElement.classList.remove('ailyn-resizing');
+  }
+  function init() {
+    const d = doc();
+    sidebar = getSidebar();
+    if (!d || !sidebar) return;
+    if (!isCollapsed(sidebar)) applyWidth(readSaved(), false);
+    if (!d.__ailynSidebarResizeBound) {
+      d.__ailynSidebarResizeBound = true;
+      d.addEventListener('pointerdown', onDown, true);
+      d.addEventListener('pointermove', onMove, true);
+      d.addEventListener('pointerup', onUp, true);
+      d.addEventListener('pointercancel', onUp, true);
+    }
+    if (!d.__ailynSidebarResizeObserver) {
+      d.__ailynSidebarResizeObserver = new MutationObserver(function () {
+        const el = getSidebar();
+        if (!el) return;
+        sidebar = el;
+        if (isCollapsed(el)) {
+          el.style.removeProperty('width');
+          el.style.removeProperty('min-width');
+          el.style.removeProperty('max-width');
+          onUp();
+        } else if (!dragging) {
+          applyWidth(readSaved(), false);
+        }
+      });
+      d.__ailynSidebarResizeObserver.observe(d.body, {
+        subtree: true, childList: true, attributes: true,
+        attributeFilter: ['aria-expanded']
+      });
+    }
+  }
+  [100, 500, 1200, 2500].forEach(ms => setTimeout(init, ms));
+})();
+</script>
+""", height=0, scrolling=False)
 
 with st.sidebar:
     st.markdown(f"""
@@ -2322,48 +2411,6 @@ with st.sidebar:
     st.markdown(
         f"<div class='sidebar-live'><span>●</span> &nbsp; LIVE SYSTEM &nbsp; • &nbsp; "
         f"{manila_now().strftime('%I:%M %p  |  %b %d')}</div>",
-        unsafe_allow_html=True
-    )
-
-    # Strong client/project identity card.
-    client_name = st.session_state.project.get("client", "").strip() or "CLIENT NOT SET"
-    project_name = st.session_state.project.get("name", "Ailyn House Project")
-    project_status = st.session_state.project.get("status", "Active")
-    st.markdown(f"""
-    <div class="sidebar-client-card">
-        <div class="sidebar-client-kicker">CLIENT / PROJECT OWNER</div>
-        <div class="sidebar-client-name">{client_name}</div>
-        <div class="sidebar-client-project">{project_name}</div>
-        <div class="sidebar-client-status"><span>●</span> {project_status.upper()}</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.markdown("<div class='sidebar-theme-title'>DISPLAY / LIGHT CONTROL</div>", unsafe_allow_html=True)
-    theme_left, theme_right = st.columns(2)
-    with theme_left:
-        if st.button("LOW LIGHT", use_container_width=True, key="theme_low"):
-            set_ui_theme("low")
-        if st.button("NORMAL", use_container_width=True, key="theme_normal"):
-            set_ui_theme("normal")
-    with theme_right:
-        if st.button("DARK", use_container_width=True, key="theme_dark"):
-            set_ui_theme("dark")
-        if st.button("HIGH CONTRAST", use_container_width=True, key="theme_contrast"):
-            set_ui_theme("contrast")
-
-    st.markdown(
-        f"<div class='sidebar-size-row'><span>{'WIDE' if sidebar_mode == 'wide' else 'COMPACT'} MODE</span><span>{st.session_state.get('ui_theme','normal').upper()}</span></div>",
-        unsafe_allow_html=True
-    )
-    size_left, size_right = st.columns(2)
-    with size_left:
-        if st.button("↔ WIDE", use_container_width=True, key="sidebar_wide"):
-            set_sidebar_mode("wide")
-    with size_right:
-        if st.button("⇥ COMPACT", use_container_width=True, key="sidebar_compact"):
-            set_sidebar_mode("compact")
-    st.markdown(
-        "<div class='sidebar-resize-note'>Use WIDE/COMPACT for quick sizing, or drag the sidebar's right edge when your Streamlit browser exposes the resize handle.</div>",
         unsafe_allow_html=True
     )
 
@@ -2464,13 +2511,16 @@ if view == "home":
             f"Client: {project.get('client') or 'Not set'}  |  Site: {project.get('address') or 'Not set'}  |  "
             f"Target: {project.get('target_date') or 'Not set'}  |  Status: {project.get('status', 'Active')}"
         )
-    # Primary workspace buttons: Materials and Payroll.
-    top_material, top_payroll = st.columns(2)
-    with top_material:
-        if st.button("◇  MATERIALS", key="dashboard_top_materials", use_container_width=True):
-            set_view("material")
-    with top_payroll:
-        if st.button("♙  PAYROLL", key="dashboard_top_payroll", use_container_width=True):
+    # Dashboard switcher: client can choose which dashboard to open.
+    dash_overview_col, dash_material_col, dash_payroll_col = st.columns(3)
+    with dash_overview_col:
+        if st.button("📊 OVERVIEW", key="dashboard_overview", use_container_width=True):
+            set_view("home")
+    with dash_material_col:
+        if st.button("🧱 RAW MATERIAL DASHBOARD", key="dashboard_material", use_container_width=True):
+            set_view("material_dashboard")
+    with dash_payroll_col:
+        if st.button("👷 PAYROLL DASHBOARD", key="dashboard_payroll", use_container_width=True):
             set_view("payroll_dashboard")
 
     overdue_tasks = [
@@ -2496,35 +2546,38 @@ if view == "home":
             f"₱{monthly_construction_spend():,.2f}",
         )
 
-    # Primary workspaces stay at the top of the dashboard for faster access.
-    st.markdown("""
-        <div class="dashboard-action-rail">
-            <div class="dashboard-action-copy">
-                <span>PRIMARY WORKSPACES</span>
-                <small>Open Materials or Payroll directly from the dashboard.</small>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    material_action, payroll_action = st.columns(2)
-    with material_action:
+    # ============================================================
+    # PRIMARY WORKSPACES — directly under dashboard metrics
+    # ============================================================
+    action_material, action_payroll = st.columns(2, gap="large")
+    with action_material:
         if st.button("◇  MATERIALS", key="dashboard_materials_workspace_top", use_container_width=True):
             set_view("material")
-    with payroll_action:
+    with action_payroll:
         if st.button("♙  PAYROLL", key="dashboard_payroll_workspace_top", use_container_width=True):
-            set_view("payroll_dashboard")
+            set_view("payroll_ledger")
+
+    # Clean dashboard summary: keep detailed operations in the sidebar.
+    st.markdown("### 📊 OPERATIONS SUMMARY")
+    op1, op2, op3, op4 = st.columns(4)
+    with op1:
+        st.metric("MATERIALS", f"₱{material:,.2f}")
+    with op2:
+        st.metric("OPERATING EXPENSES", f"₱{expenses:,.2f}")
+    with op3:
+        st.metric("LABOR PAYROLL", f"₱{payroll_labor:,.2f}")
+    with op4:
+        st.metric("PAYROLL EXPENSES", f"₱{payroll_expenses:,.2f}")
 
     st.markdown(f"""
-        <div class="dash-section integrated-control-strip">
-            <div class="section-head"><div class="section-title" style="margin:0">INTEGRATED OPERATIONS</div><span>CONSTRUCTION + PAYROLL</span></div>
-            <div class="integrated-grid">
-                <div class="integrated-item"><span class="integrated-icon">◇</span><div><small>MATERIALS</small><strong>₱{material:,.2f}</strong></div></div>
-                <div class="integrated-item"><span class="integrated-icon">▣</span><div><small>OPERATING EXPENSES</small><strong>₱{expenses:,.2f}</strong></div></div>
-                <div class="integrated-item"><span class="integrated-icon">♙</span><div><small>LABOR PAYROLL</small><strong>₱{payroll_labor:,.2f}</strong></div></div>
-                <div class="integrated-item"><span class="integrated-icon">◎</span><div><small>PAYROLL EXPENSES</small><strong>₱{payroll_expenses:,.2f}</strong></div></div>
-                <div class="integrated-total"><small>TOTAL OPERATING SPEND</small><strong>₱{total_operating_spend:,.2f}</strong><span>{worker_count} worker(s) active in payroll</span></div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+    <div class="dash-section">
+      <div class="section-head"><div class="section-title" style="margin:0">TOTAL OPERATING SPEND</div><span>CONSTRUCTION + PAYROLL</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:20px;flex-wrap:wrap;padding:16px 4px 4px">
+        <div><div style="font-size:28px;font-weight:900">₱{total_operating_spend:,.2f}</div><div style="font-size:12px;color:#7b867f;margin-top:4px">{worker_count} worker(s) active in payroll</div></div>
+        <div style="font-size:12px;color:#7b867f">Use the dashboard buttons above or the sidebar for detailed operations.</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
 
     st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
     left, right = st.columns([1.05, 1])
@@ -2570,7 +2623,7 @@ if view == "home":
     if st.button("OPEN CONSTRUCTION PLANNER", use_container_width=True):
         set_view("planner_output")
 
-    
+
 elif view == "payroll_dashboard":
     payroll_labor = sum(float(record.get("net", 0)) for record in st.session_state.labor_records)
     payroll_expenses = sum(float(record.get("price", 0)) for record in st.session_state.payroll_expenses)
@@ -2759,6 +2812,49 @@ elif view == "planner_output":
     st.divider()
     if st.button("🏠 RETURN TO HOME", use_container_width=True):
         set_view("home")
+
+elif view == "material_dashboard":
+    material_records = [r for r in st.session_state.records if r.get("type") == "material"]
+    material_total = sum(float(r.get("amount", 0) or 0) for r in material_records)
+    material_qty = sum(float(r.get("qty", 0) or 0) for r in material_records)
+    suppliers = len({str(r.get("sender") or r.get("supplier") or "").strip() for r in material_records if str(r.get("sender") or r.get("supplier") or "").strip()})
+
+    st.markdown("""
+    <div class="dashboard-heading">
+      <div>
+        <div class="dashboard-heading-title">RAW MATERIAL DASHBOARD</div>
+        <div class="dashboard-heading-sub">MATERIAL COST • QUANTITY • SUPPLIER MONITORING</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.metric("TOTAL MATERIAL COST", f"₱{material_total:,.2f}")
+    with c2:
+        st.metric("TOTAL QUANTITY", f"{material_qty:,.2f}")
+    with c3:
+        st.metric("SUPPLIERS", str(suppliers))
+
+    if material_records:
+        rows = []
+        for r in reversed(material_records):
+            rows.append({
+                "Date": r.get("date") or r.get("timestamp") or "",
+                "Material": r.get("name", ""),
+                "Supplier": r.get("sender") or r.get("supplier") or "Not set",
+                "Qty": r.get("qty", 0),
+                "Unit Price": r.get("price", 0),
+                "Delivery": r.get("delivery", 0),
+                "Amount": r.get("amount", 0),
+            })
+        st.dataframe(rows, use_container_width=True, hide_index=True)
+    else:
+        st.info("No raw material records yet. Use MATERIAL ENTRY from the sidebar to add materials.")
+
+    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+    if st.button("➕ MATERIAL ENTRY", use_container_width=True, key="material_dashboard_entry"):
+        set_view("material")
 
 elif view == "material":
     st.subheader("➕ ADD MATERIAL")
@@ -3298,6 +3394,24 @@ elif view == "receipt_archive":
                     st.success(f"Deleted: {report_path.name}")
                     st.rerun()
 
+elif view == "monthly_close":
+    st.markdown("## 🔒 MONTHLY CLOSING")
+    st.caption("Review the current month's construction and payroll totals before closing the period.")
+    close_month = st.selectbox("Month", [manila_now().strftime("%Y-%m")], key="monthly_close_month")
+    construction = monthly_construction_spend(close_month)
+    total = monthly_spend(close_month)
+    payroll = total - construction
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.metric("CONSTRUCTION SPEND", f"₱{construction:,.2f}")
+    with c2:
+        st.metric("PAYROLL / OTHER", f"₱{payroll:,.2f}")
+    with c3:
+        st.metric("TOTAL MONTHLY SPEND", f"₱{total:,.2f}")
+    st.warning("Monthly closing is a review screen. No records are deleted or changed by opening this page.")
+    if st.button("⬅️ BACK TO OVERVIEW", use_container_width=True, key="monthly_close_back"):
+        set_view("home")
+
 elif view == "update":
     st.markdown("## Upgrade Center")
     st.caption("Administrator-only signed release installation. The current app is backed up first.")
@@ -3326,4 +3440,3 @@ elif view == "update":
 
 else:
     st.info("Welcome to Ailyn Project Management System. Use the command sidebar to navigate.")
-
