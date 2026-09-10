@@ -1,3 +1,4 @@
+
 import os
 import time
 import base64
@@ -11,48 +12,29 @@ import hashlib
 import hmac
 import uuid
 import re
-import random
 from datetime import datetime
 from email.message import EmailMessage
 from zoneinfo import ZoneInfo
 import streamlit as st
-import streamlit.components.v1 as components
 import json
-from collections import defaultdict
-import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 from PIL import Image, ImageOps
-from word_puzzle import WORD_PUZZLES, check_guess, check_math_answer, math_problem, puzzle_for_level
-from financial_close import close_month, is_month_closed, month_summary
-
 try:
     import pytesseract
 except ModuleNotFoundError:
     pytesseract = None
 TESSERACT_NOT_FOUND_ERROR = getattr(pytesseract, "TesseractNotFoundError", RuntimeError)
-from storage import BACKUP_DIR, DATA_DIR, DB_FILE, create_backup, delete_scanner_photo, history_count, \
-    load_state as load_sqlite_state
+from storage import BACKUP_DIR, DB_FILE, create_backup, delete_scanner_photo, history_count, load_state as load_sqlite_state
 from storage import restore_backup, save_scanner_photo, save_state as save_sqlite_state
 from app_logic import FULL_DAY_RATES, TIER_TABLE, calculate_labor_pay, get_partial_rate
-from receipt_logic import parse_scanned_receipt
-from report_security import escape_report_text, report_download_name
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-STATE_FILE = os.path.join(DATA_DIR, "app_state.json")
-EXCEL_FILE = os.path.join(DATA_DIR, "ailyn_project_ledger.xlsx")
-MATERIALS_EXCEL_FILE = os.path.join(DATA_DIR, "materials_ledger.xlsx")
-LABOR_EXCEL_FILE = os.path.join(DATA_DIR, "labor_ledger.xlsx")
-TIMEZONE_NAME = os.getenv("AILYN_TIMEZONE", "Asia/Manila")
-try:
-    PHILIPPINES_TZ = ZoneInfo(TIMEZONE_NAME)
-except KeyError:
-    TIMEZONE_NAME = "Asia/Manila"
-    PHILIPPINES_TZ = ZoneInfo(TIMEZONE_NAME)
-MAX_IMAGE_UPLOAD_BYTES = 10 * 1024 * 1024
-MAX_UPDATE_UPLOAD_BYTES = 2 * 1024 * 1024
-AUTH_REQUIRED = os.getenv("AILYN_AUTH_REQUIRED", "0").strip().lower() not in {"0", "false", "no"}
-OFFLINE_MODE = os.getenv("AILYN_OFFLINE_MODE", "1").strip().lower() not in {"0", "false", "no"}
+STATE_FILE = os.path.join(APP_DIR, "app_state.json")
+EXCEL_FILE = os.path.join(APP_DIR, "ailyn_project_ledger.xlsx")
+MATERIALS_EXCEL_FILE = os.path.join(APP_DIR, "materials_ledger.xlsx")
+LABOR_EXCEL_FILE = os.path.join(APP_DIR, "labor_ledger.xlsx")
+PHILIPPINES_TZ = ZoneInfo("Asia/Manila")
 
 
 def manila_now():
@@ -67,10 +49,25 @@ def scan_photo_text(photo):
     return pytesseract.image_to_string(image).strip()
 
 
+def parse_scanned_receipt(text):
+    """Extract conservative material-entry suggestions from OCR text."""
+    amount_pattern = r"(?:PHP|₱)\s*([0-9][0-9,]*(?:\.\d{1,2})?)"
+    currency_amounts = [float(value.replace(",", "")) for value in re.findall(amount_pattern, text, re.IGNORECASE)]
+    all_amounts = [float(value.replace(",", "")) for value in re.findall(r"\b[0-9][0-9,]*\.\d{2}\b", text)]
+    amounts = currency_amounts or all_amounts
+    quantity_match = re.search(r"\b(?:qty|quantity)\s*[:x-]?\s*(\d+)\b|\b(\d+)\s*(?:pcs?|pieces?|units?|x)\b", text, re.IGNORECASE)
+    quantity = int(next(value for value in quantity_match.groups() if value)) if quantity_match else 1
+    delivery_match = re.search(r"delivery\D+([0-9][0-9,]*(?:\.\d{1,2})?)", text, re.IGNORECASE)
+    delivery = float(delivery_match.group(1).replace(",", "")) if delivery_match else 0.0
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    name = next((line for line in lines if not re.search(r"(?:php|₱|total|qty|quantity|delivery|receipt|invoice|date)", line, re.IGNORECASE)), "")
+    total = amounts[-1] if amounts else 0.0
+    price = total / quantity if quantity > 0 else total
+    return {"name": name[:120], "price": price, "qty": quantity, "delivery": delivery}
+
+
 def normalize_photo_bytes(photo_bytes, mime_type="image/jpeg"):
     """Apply camera EXIF orientation and return display-ready image bytes."""
-    if len(photo_bytes) > MAX_IMAGE_UPLOAD_BYTES:
-        raise ValueError("The image is too large. Maximum size is 10 MB.")
     image = ImageOps.exif_transpose(Image.open(BytesIO(photo_bytes))).convert("RGB")
     output = BytesIO()
     image.save(output, format="JPEG", quality=90, optimize=True)
@@ -81,8 +78,7 @@ def searchable_records(state):
     records = []
     for category, key in (("Financial", "records"), ("Labor", "labor_records"), ("Payroll", "payroll_expenses")):
         for record in state.get(key, []):
-            row_category = "Expense" if category == "Financial" and record.get(
-                "type") == "expense" else "Material" if category == "Financial" else category
+            row_category = "Expense" if category == "Financial" and record.get("type") == "expense" else "Material" if category == "Financial" else category
             records.append({"category": row_category, **record})
     return records
 
@@ -117,19 +113,7 @@ PERSISTENT_KEYS = [
     "client_notes",
     "app_settings",
     "messages",
-    "dashboard_tracker",
-    "puzzle_level",
-    "puzzle_score",
-    "puzzle_streak",
-    "puzzle_seed",
-    "math_level",
-    "math_score",
-    "math_streak",
-    "math_seed",
-    "financial_closes",
-    "offline_mode",
 ]
-
 
 def load_state():
     return load_sqlite_state()
@@ -153,8 +137,7 @@ def write_excel(state, archive_entry=None):
     workbook = Workbook()
     transactions_sheet = workbook.active
     transactions_sheet.title = "Transactions"
-    transaction_headers = ["Date", "Month", "Category", "Description", "Supplier", "Invoice", "Payment Method",
-                           "Sender", "Qty", "Unit Price", "Delivery", "Amount"]
+    transaction_headers = ["Date", "Month", "Category", "Description", "Supplier", "Invoice", "Payment Method", "Sender", "Qty", "Unit Price", "Delivery", "Amount"]
     transactions_sheet.append(transaction_headers)
     for record in state.get("records", []):
         transactions_sheet.append([
@@ -165,14 +148,11 @@ def write_excel(state, archive_entry=None):
         ])
 
     payroll_sheet = workbook.create_sheet("Payroll")
-    payroll_sheet.append(
-        ["Date", "Month", "Type", "Worker ID", "Worker / Description", "Role", "Pay Period", "Days", "Gross Pay",
-         "Cash Advance", "Net / Amount"])
+    payroll_sheet.append(["Date", "Month", "Type", "Worker ID", "Worker / Description", "Role", "Pay Period", "Days", "Gross Pay", "Cash Advance", "Net / Amount"])
     for record in state.get("labor_records", []):
         payroll_sheet.append([
             record.get("date", ""), month_key(record), "Labor", record.get("worker_id", ""), record.get("name", ""),
-            record.get("role", ""), record.get("pay_period", ""), float(record.get("days", 0)),
-            float(record.get("gross_pay", 0)),
+            record.get("role", ""), record.get("pay_period", ""), float(record.get("days", 0)), float(record.get("gross_pay", 0)),
             float(record.get("ca", 0)), float(record.get("net", 0)),
         ])
     for record in state.get("payroll_expenses", []):
@@ -182,45 +162,24 @@ def write_excel(state, archive_entry=None):
         ])
 
     summary = workbook.create_sheet("Monthly Summary")
-    summary.append(
-        ["Month", "Materials", "Construction Expenses", "Excess Money", "Labor", "Payroll Expenses", "Total Spent"])
+    summary.append(["Month", "Materials", "Construction Expenses", "Excess Money", "Labor", "Payroll Expenses", "Total Spent"])
     months = {month_key(record) for record in state.get("records", [])}
     months.update(month_key(record) for record in state.get("labor_records", []))
     months.update(month_key(record) for record in state.get("payroll_expenses", []))
     for month in sorted(months, reverse=True):
-        materials = sum(float(r.get("amount", 0)) for r in state.get("records", []) if
-                        month_key(r) == month and r.get("type") == "material")
-        construction = sum(float(r.get("amount", 0)) for r in state.get("records", []) if
-                           month_key(r) == month and r.get("type") == "expense")
-        excess = sum(float(r.get("amount", 0)) for r in state.get("records", []) if
-                     month_key(r) == month and r.get("type") == "excess")
+        materials = sum(float(r.get("amount", 0)) for r in state.get("records", []) if month_key(r) == month and r.get("type") == "material")
+        construction = sum(float(r.get("amount", 0)) for r in state.get("records", []) if month_key(r) == month and r.get("type") == "expense")
+        excess = sum(float(r.get("amount", 0)) for r in state.get("records", []) if month_key(r) == month and r.get("type") == "excess")
         labor = sum(float(r.get("net", 0)) for r in state.get("labor_records", []) if month_key(r) == month)
         payroll = sum(float(r.get("price", 0)) for r in state.get("payroll_expenses", []) if month_key(r) == month)
-        summary.append(
-            [month, materials, construction, excess, labor, payroll, materials + construction + labor + payroll])
+        summary.append([month, materials, construction, excess, labor, payroll, materials + construction + labor + payroll])
 
     archive = workbook.create_sheet("Receipt Archive")
     archive.append(["Receipt ID", "Saved At", "Report Type", "Title", "HTML File"])
     for entry in state.get("receipt_archive", []):
-        archive.append(
-            [entry.get("id", ""), entry.get("saved_at", ""), entry.get("report_type", ""), entry.get("title", ""),
-             entry.get("file", "")])
+        archive.append([entry.get("id", ""), entry.get("saved_at", ""), entry.get("report_type", ""), entry.get("title", ""), entry.get("file", "")])
     if archive_entry:
-        archive.append(
-            [archive_entry["id"], archive_entry["saved_at"], archive_entry["report_type"], archive_entry["title"],
-             archive_entry["file"]])
-
-    closing_sheet = workbook.create_sheet("Monthly Closing")
-    closing_sheet.append(["Month", "Status", "Closed At", "Closed By", "Note", "Total Spending"])
-    for month, close in sorted(state.get("financial_closes", {}).items(), reverse=True):
-        closing_sheet.append([
-            month,
-            "Closed" if close.get("closed") else "Open",
-            close.get("closed_at", ""),
-            close.get("closed_by", ""),
-            close.get("note", ""),
-            float(close.get("summary", {}).get("spent", 0)),
-        ])
+            archive.append([archive_entry["id"], archive_entry["saved_at"], archive_entry["report_type"], archive_entry["title"], archive_entry["file"]])
 
     for sheet in workbook.worksheets:
         sheet.freeze_panes = "A2"
@@ -239,9 +198,7 @@ def write_separate_excel_files(state):
     materials_book = Workbook()
     materials_sheet = materials_book.active
     materials_sheet.title = "Materials"
-    materials_sheet.append(
-        ["Date", "Month", "Description", "Supplier", "Invoice", "Payment Method", "Sender", "Qty", "Unit Price",
-         "Delivery", "Amount"])
+    materials_sheet.append(["Date", "Month", "Description", "Supplier", "Invoice", "Payment Method", "Sender", "Qty", "Unit Price", "Delivery", "Amount"])
     for record in state.get("records", []):
         if record.get("type") == "material":
             materials_sheet.append([
@@ -254,12 +211,10 @@ def write_separate_excel_files(state):
     labor_book = Workbook()
     labor_sheet = labor_book.active
     labor_sheet.title = "Labor"
-    labor_sheet.append(
-        ["Date", "Month", "Worker ID", "Worker", "Role", "Pay Period", "Days", "Gross Pay", "Cash Advance", "Net Pay"])
+    labor_sheet.append(["Date", "Month", "Worker ID", "Worker", "Role", "Pay Period", "Days", "Gross Pay", "Cash Advance", "Net Pay"])
     for record in state.get("labor_records", []):
         labor_sheet.append([
-            record.get("date", ""), month_key(record), record.get("worker_id", ""), record.get("name", ""),
-            record.get("role", ""), record.get("pay_period", ""),
+            record.get("date", ""), month_key(record), record.get("worker_id", ""), record.get("name", ""), record.get("role", ""), record.get("pay_period", ""),
             float(record.get("days", 0)), float(record.get("gross_pay", 0)), float(record.get("ca", 0)),
             float(record.get("net", 0)),
         ])
@@ -292,11 +247,8 @@ def save_state(state):
     write_excel(state)
     write_separate_excel_files(state)
 
-
 APP_VERSION = "AILYN HOUSE"
-APP_NAME = "Ailyn House"
-APP_BROWSER_TITLE = "Ailyn House | Project Control System"
-APP_BRAND_DESCRIPTION = "Integrated construction, payroll, materials, and project tracking dashboard"
+APP_NAME = "AILYN HOUSE | Ailyn House Project"
 
 # ================================================================
 # Construction/Materials, Payroll, and Schedule are intentionally unified.
@@ -305,12 +257,6 @@ APP_BRAND_DESCRIPTION = "Integrated construction, payroll, materials, and projec
 RECEIVER_EMAIL = "garryboypepito2004@gmail.com"
 RECEIVER_AILYN = "ailyn_peps0678@yahoo.com"
 AILYN_LOGO_DATA = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAJsAAAC5CAYAAAA/BU2xAAANMklEQVR4nO3de1gU9RrA8XcEr5kmnvB21DI1zSOleclQIw0yj2bFelBKCCQJD3hBQVGCRRINEJRFyAviXbSFQBHjYooJKpgim2IqykXIW2haltbj7/zRc56HR0V22Zn3NzP7fv51mHmd/Trs7M6MAmMMCMHQjPcAxHJQbAQNxUbQUGwEDcVG0FBsBA3FRtBQbAQNxUbQUGwEDcVG0FBsBA3FRtBQbAQNxUbQUGwEDcVG0FBsnHxz6juLu0SaYuNgy3cZLCYrmfcY6Cg2ZDFZyeyTdcG8x+DCmvcAliQoZQWLzdrIewxuKDYkXmuD2dbDGbzH4IpiQzAp2odllx7mPQZ3FJvE7EOnsO8vneY9hizQCYJEqm7Usj5znSi0eujIJoETl86wsUvd4Pf793iPIit0ZBNZnqGQvR7qQqE9BsUmop1HstiEKG/eY8gWxSaSxNwdzD1xAe8xZI3es4kgPC2BLU1P5D2G7FFsZpq7JYIl5u7gPYYiUGxmcE9cwHYeyeI9hmJQbE1w/XYd81gTBHmGQt6jKArFZqKztRfZx4kLoaSyjPcoikOxmaDw3Ak2LSEQauqu8h5FkSg2I+05cYB9GD8P7v/1J+9RFIs+ZzPCxvw0NnnlLArNTHRka8SKvRvY4p2xvMdQBTqyNYJCEw/FRtBQbAQNxUbQUGwEDcVG0FBsBA3FRtBQbAQNxUbQUGwEDcVG0FBsBA3FRtBQbASNImMLT0uwuOfRqoHiYgvYFkmhKZSiYpux/jOmy97CewzSRIq4LPynW9fZ3M0RkH48j/coxAyyj62sppz5b10GB04f4z0KMZOsYzt6voTN27oc6OmN6iDb2LJLD7N5W5fDhSuVvEchIpFlbLuO7mPzti6H67freI9CRCS72NYf+IrN27oc7v15n/coRGSyio1uCFY32cQW8tUqFrlnPe8xiIRkEdvsTUvZmv0pvMcgEuMe28dfLmQphXt5j0EQcI3tgxhfllWSz3MEgojLd6PlV6vY2KXuFJqFQT+ynag4w7zXfQaG6nPYmyacocZ24Mwx5r0+BKpu1GJulsgEWmxfF+cyn6RQuHX3DtYmicygxLYxP435bNACY3TdoyWT/ARh5b5N7NOkUAoNiaH6HDtUVizLnS1pbGGp8WzhjmgpN0HqST+ex4YuduY9RoMk+zU6d3MES8xT9v/pNDHS+9EjBAMAAX+Wxijhe2VJYvNcs4htL9gjxarRjAhxYScrzjz6BzIMzSdJy5LzU3mP0SjRY3OO9WN7Tx4Ue7VoLtddYW8t9YCK65cbX1gGRzmnZZ7sUFkx3yGMJFpsl+uuMPfEBVDw4wmxVomuqNzAPoj5L9y4c5P3KI0yVJ9jk6J9oPbmNd6jGE202N5bMRN+qD4v1urQbTz0NfPfEgF37/1h/A9xOqqlH89jU+Lm8tm4GUSLTcmhLd4Zw2L3bYIHDx40fSWMAQjS16eEE4GGcL/EiLcpurksvViE+1ERQlPKiUBDLDa2ogulzG9zOJyqOCv+yiU4cVDSiUBDLDK2zYfSWeD2KLh197Y0GxAxNCWeCDTE4mJblBLDYrKSeY9hFKWeCDTEYmI7WVHGwtNWg1Iu2FTyiUBDLCK2HYV7Wag+TjHX0Sn9RKAhqo9Nq9ex5bvX8h7DaGo4EWiIamM7ffkCC09brZjHbKnpRKAhqowttSiHfbZrJVy8Vs17lAaVXb4A5Ver2AudeghqOxFoiOpiW5r+JQtPW817jEZdv3MTNCtnwcs9+7OUwkze46BQTWznr1Sw8LQE2HV0H+9RjFZWUw5lNeW8x0CjitgyTx5ki1Ni4MefLkm2jT6de8J5elacWRT1AOfHid67gWli/SQLrW+X52Cb7wowRGYKgRO9JNmGpVBsbFU3atn0tYtZsIQffC6a5A2lX+wRnIc5CQAASybPFoo+18P4V96QbJtqpshfo+VXq+CDWF/JLmt699UxoNX4wUvdej/yLaddjxeFNP942F6wh4XqdVD980+SzKBGgli32LVyG4h0+5gAf19WIb5ett0h1NkXXEaMN/qrdDl+15oTtAFG9x8qu7slFPhrVJrQAid6wZnoLMGU0AAAIqb4CwVhKeBkN1KSudREgbGJa/wrb0DR53pYMnl2k48Erz4/QNg9P1FY6xUOXTrYijmeqlhsbN07doEN3hGQ5h8v2PV4UZRfOW6j3xMurdovzBrnJsbqVMciY/Mf7wHnY3MEV/uJkryviXQNEA6FbIMxA16TYvWKZVGxOdmNhIKwFIiY4i/5m+dhve2ErAXrhATPUHi2nY00G5HdKcCTWURsXTrYwlqvcNg9P1F49fkBqC+Rp4NGqI7PF2Y6uoq/clk+PqZhqo9t1jg3uLRqv+A2+j2ux4GYaUHCt8GbYFS/IRKsXRmHONXGNmbAa3AoZBtEugbI5pV4ve9gIXdRshDnHgw2T7UXcc3KOMSpLrZn29lAgmcoZC1YJwzrbSeb0OqbMdZFqE08LMwY68J7FFT8YpPgH+NMR1eojs8XPB00sozsYXHuwUJO0AYY0WeQqOvNOL5f1PWJRYFfVz1qVL8hEKbxg9f7DlZEZI+TkLudafU6uP37r6Ksz330+7DGa4ms9oeiY7N5qj1oNX4wY6yLrHZqU1375WcWmqqD5IPi3Fk1tNdAiHELgqG9Bspi/yg2thljXSDOPVgWO1Fs354+ykL1OiguLzV7XW1btYHlU+eD15uTue8rxcU2os8gCNP4yfKqBrHFfbOZafU6uHvfhMd4NcDrzckQ7xHCdZ8hxCYAA2b2J0HtWrcFrcYPZjq6qj6y+mpvXmOh+jjY8l2G2esa1tsO4tyD4ZWe/bnsQ0Uc2TwcnCHM2Q9s23e0qNDqyyk9zLR6HZx43HN+TdCudVuI+jAQ3Ee/j74vZR3b0BfsIEzjB2MGvGaxkT0sJiuZafU6uP/Xn2atx+etqRDrtgh1v8oytjYtWoFW4wezxrlRZI9RdaOWhep1sMPM+01H9BkE8R4hMOCfj17+LgXZxTZt1CQI08yCrh1sKbRGZJXkM61eB6VVPzZ5Hc+0eRpipgWBVJdb1SdKbJfrrrDecxzNWsfg514CrcYPnOxGUmQm+mL3OhaWGg8PWNOfCTxr3DSIdA2UdN+bHdu+kkPMd+MSqKm72uR1REzxB//xHpL8RU9VnpXdt9Qv9+wn+t/14rVqpk3Vwa4jTX8iwOh+QyHeIwT6dnlOktfCrNiWZaxhYanxZg3Qqf0/oFJ3QLJ/UW4JgcyURzIETJgOLZu3NHr5ovJSyCk9bPTyu+cnSnb0zik9zN6N9gHHgfaQayho0jps2raHVe7BMHn4ONFnbNJ9o9d++Zn5bQyHjO/l+YWvOcL/M8eknRyfvZWZEhuGgAnTYd0n4RCVmQSrc7aZ9LN1v/4C01YHwKnKs+xzE/dFY0y+6iPXUMBGhbmqMjQ16fzMs8KKjxYKf2w2CIsmeUNzK9OOK9GZSTAhyptVXK8R7W2ISbFFZSaxiVGfQqXJjwul9/wYnOxGCn9sNggPf5UX4uwr3Ek+KSyfOh86Pt3B6PXlGQphpHYqpB/PEyU4o3P/aPV8pj+WbfSKh/T6FzjZ2UO3Dp3B2soKrIRmYGVlDdZWVmDdzAqsrazBupkVtGnZukmDE9PNecddmPOOO2w4qGdRe5LgkhH/GdyNOzdhStxcCJrkzUKdfc06ajQa28Ezx5jvxnC4YOTjomY6ukLAhOnQhT4nky1PB43g6aAB/bFsFp2ZBCWVZY3+zLKMNVBSWcbiPw6BbjadmvTaPjG2lfs2saySfOjawRa6NnKnt33fwWBu+QSXZvjbgmb425BrKGBRmUmNLv/bvd/BY00QzB7nxv49yMHk1/qJsf3/sEvUzXGgveA40F7y7ajuhhciX6J9NypXaUU5zJQ70kf1G2LSr4fam9dY+dUqo5dvYd0chvd+2SLfbijyYYCm6GbTSdIXt2sHW6Gx97P1nbh0Wt3/up+Afo0SNBQbQUOxETQUG0Gj+hOEovJSyDUUGv2mPPh9H5NOJorLS1l2qfGX8zj0H2rK6lUFNbbkg6noZ2K7jmRB8cUfjF7e5qn2rHUL469n+/b0Ufjq2DdGL3/rt4/g/JVK9P3g4eDM/eMW1M/ZArZFMl32FrTtkb+1at4SbiUd5x4bvWcjaCg2ggb1PVvbVm0gaJI35iYh4/h+OFNzwejl/cd7QMvmLYxevrjcAHk/FBq9vMuI8dDLtrvRy6sJamw8LkEqv1rFenfuYfTymuFvQysTThC6d+wMbVq2Mnr5D+0nWuztiqr/Ip7IB71nI2goNoKGYiNoKDaChmIjaCg2goZiI2goNoKGYiNoKDaChmIjaCg2goZiI2goNoKGYiNoKDaChmIjaCg2goZiI2goNoKGYiNoKDaChmIjaCg2goZiI2goNoKGYiNoKDaChmIjaCg2goZiI2goNoKGYiNoKDaChmIjaCg2goZiI2goNoKGYiNoKDaChmIjaCg2goZiI2goNoLmfyASapdvGeRmAAAAAElFTkSuQmCC"
-try:
-    _logo_payload = AILYN_LOGO_DATA.split(",", 1)[1]
-    APP_ICON = Image.open(BytesIO(base64.b64decode(_logo_payload))).convert("RGBA")
-except (IndexError, ValueError, OSError):
-    APP_ICON = "🏠"
-
 SENDER_EMAIL = os.getenv("AILYN_SENDER_EMAIL", "")
 SENDER_PASSWORD = os.getenv("AILYN_SENDER_PASSWORD", "")
 ADMIN_PASSWORD = os.getenv("AILYN_ADMIN_PASSWORD", "")
@@ -318,154 +264,20 @@ UPDATE_SIGNING_KEY = os.getenv("AILYN_UPDATE_SIGNING_KEY", "")
 LOGIN_PASSWORD = os.getenv("AILYN_LOGIN_PASSWORD", "")
 
 st.set_page_config(
-    page_title=APP_BROWSER_TITLE,
-    page_icon=APP_ICON,
+    page_title=APP_NAME,
+    page_icon="🅰️",
     layout="wide",
 )
 
-components.html(
-    f"""
-    <script>
-            const appTitle = {json.dumps(APP_BROWSER_TITLE)};
-            const appDescription = {json.dumps(APP_BRAND_DESCRIPTION)};
-            const brandLogo = {json.dumps(AILYN_LOGO_DATA)};
-            const targetDocument = window.parent && window.parent.document ? window.parent.document : document;
-
-            targetDocument.title = appTitle;
-
-            const metaDescription = targetDocument.querySelector('meta[name="description"]') || targetDocument.createElement('meta');
-      metaDescription.name = 'description';
-      metaDescription.content = appDescription;
-            targetDocument.head.appendChild(metaDescription);
-
-            const ogTitle = targetDocument.querySelector('meta[property="og:title"]') || targetDocument.createElement('meta');
-      ogTitle.setAttribute('property', 'og:title');
-      ogTitle.content = appTitle;
-            targetDocument.head.appendChild(ogTitle);
-
-            const ogDescription = targetDocument.querySelector('meta[property="og:description"]') || targetDocument.createElement('meta');
-      ogDescription.setAttribute('property', 'og:description');
-      ogDescription.content = appDescription;
-            targetDocument.head.appendChild(ogDescription);
-
-            const favicon = targetDocument.querySelector("link[rel='icon']") || targetDocument.createElement('link');
-      favicon.rel = 'icon';
-      favicon.type = 'image/png';
-      favicon.href = brandLogo;
-            targetDocument.head.appendChild(favicon);
-
-            const manifest = targetDocument.querySelector("link[rel='manifest']") || targetDocument.createElement('link');
-            manifest.rel = 'manifest';
-            manifest.href = '/app/static/manifest.json';
-            targetDocument.head.appendChild(manifest);
-
-            const touchIcon = targetDocument.querySelector("link[rel='apple-touch-icon']") || targetDocument.createElement('link');
-            touchIcon.rel = 'apple-touch-icon';
-            touchIcon.href = '/app/static/ailyn-icon.svg';
-            targetDocument.head.appendChild(touchIcon);
-    </script>
-    """,
-    height=0,
-    width=0,
-)
-
-if AUTH_REQUIRED and not LOGIN_PASSWORD:
-    st.error("Workspace authentication is not configured. Set AILYN_LOGIN_PASSWORD before starting the app.")
-    st.stop()
-
-if (AUTH_REQUIRED or LOGIN_PASSWORD) and not st.session_state.get("authenticated"):
+if LOGIN_PASSWORD and not st.session_state.get("authenticated"):
     st.title("Ailyn House Project")
     st.caption("Sign in to access this project workspace.")
-    locked_until = float(st.session_state.get("login_locked_until", 0))
-    if locked_until > time.time():
-        st.error(f"Too many failed attempts. Try again in {int(locked_until - time.time()) + 1} seconds.")
-        st.stop()
     login_password = st.text_input("Workspace password", type="password")
     if st.button("SIGN IN", use_container_width=True):
         if hmac.compare_digest(login_password, LOGIN_PASSWORD):
             st.session_state.authenticated = True
-            st.session_state.login_attempts = 0
             st.rerun()
-        st.session_state.login_attempts = st.session_state.get("login_attempts", 0) + 1
-        if st.session_state.login_attempts >= 5:
-            st.session_state.login_locked_until = time.time() + 60
         st.error("Invalid workspace password.")
-    st.stop()
-
-if st.query_params.get("page") == "workspace":
-    st.session_state.welcome_seen = True
-    st.query_params.clear()
-    st.rerun()
-
-if not st.session_state.get("welcome_seen"):
-    st.markdown(
-        f"""
-        <style>
-        #MainMenu, header, footer {{ visibility: hidden !important; }}
-        .block-container {{ padding: 0 !important; max-width: 100% !important; }}
-        .stApp {{ overflow: hidden !important; }}
-        .landing-background {{
-            position: fixed; inset: 0; z-index: 0; pointer-events: none;
-            background:
-                linear-gradient(115deg, rgba(1,8,5,.42), rgba(3,25,15,.58)),
-                linear-gradient(135deg, #06170f 0%, #0b3021 54%, #06140d 100%);
-        }}
-        .landing {{
-            position: relative; z-index: 2; min-height: 100vh; width: 100%;
-            display: flex; align-items: center; color: #fff;
-        }}
-        .landing-brand {{
-            width: 47%; min-height: 100vh; box-sizing: border-box;
-            display: flex; flex-direction: column; justify-content: center; align-items: center;
-            padding: 60px; background: linear-gradient(90deg, rgba(1,14,9,.70), rgba(1,20,13,.28));
-        }}
-        .landing-logo {{ width: 180px; height: 180px; object-fit: contain; margin-bottom: 25px; filter: drop-shadow(0 0 18px rgba(54,255,169,.28)); }}
-        .landing-name {{ margin: 0; color: #f5fff8; font-family: 'Outfit','Manrope',sans-serif; font-size: clamp(42px,4vw,68px); font-weight: 900; letter-spacing: .015em; text-align: center; text-shadow: 0 10px 28px rgba(0,0,0,.30); }}
-        .landing-line, .landing-accent {{ height: 3px; background: #51f0ad; box-shadow: 0 0 15px rgba(81,240,173,.50); }}
-        .landing-line {{ width: 80px; margin-top: 25px; }}
-        .landing-divider {{ width: 1px; height: 330px; background: linear-gradient(transparent,#54efae,transparent); box-shadow: 0 0 12px rgba(84,239,174,.25); }}
-        .landing-workspace {{ width: 53%; box-sizing: border-box; padding: 70px 8%; }}
-        .landing-eyebrow {{ color: #72f7b0; font-family: 'Manrope',sans-serif; font-size: 12px; font-weight: 900; letter-spacing: .28em; margin-bottom: 25px; text-transform: uppercase; }}
-        .landing-title {{ color: #fff; font-family: 'Outfit','Manrope',sans-serif; font-size: clamp(45px,5vw,78px); line-height: .94; font-weight: 900; letter-spacing: .01em; max-width: 700px; margin: 0; text-shadow: 0 14px 34px rgba(0,0,0,.34); }}
-        .landing-accent {{ width: 95px; margin: 35px 0; }}
-        .landing-description {{ max-width: 600px; color: rgba(235,255,246,.78); font-family: 'Manrope',sans-serif; font-size: 17px; line-height: 1.7; margin-bottom: 45px; }}
-        .landing-enter {{ display: inline-flex; align-items: center; justify-content: center; gap: 22px; min-width: 360px; padding: 19px 32px; border-radius: 10px; border: 1px solid rgba(103,255,184,.70); background: linear-gradient(135deg,#1ca15e,#086d42); color: #fff !important; text-decoration: none !important; font-size: 16px; font-weight: 800; letter-spacing: .03em; box-shadow: 0 12px 35px rgba(0,0,0,.35), 0 0 25px rgba(29,185,105,.12); transition: transform .25s ease, box-shadow .25s ease, background .25s ease; }}
-        .landing-enter:hover {{ transform: translateY(-3px); background: linear-gradient(135deg,#25b96c,#08794a); box-shadow: 0 18px 45px rgba(0,0,0,.45), 0 0 35px rgba(54,255,169,.25); }}
-        .landing-arrow {{ font-size: 25px; transition: transform .25s ease; }}
-        .landing-enter:hover .landing-arrow {{ transform: translateX(6px); }}
-        @media (max-width: 900px) {{
-            .landing {{ flex-direction: column; min-height: 100vh; overflow-y: auto; }}
-            .landing-brand {{ width: 100%; min-height: auto; padding: 70px 30px 40px; }}
-            .landing-logo {{ width: 120px; height: 120px; margin-bottom: 15px; }}
-            .landing-name {{ font-size: 42px; }}
-            .landing-divider {{ width: 100px; height: 1px; background: linear-gradient(90deg,transparent,#54efae,transparent); }}
-            .landing-workspace {{ width: 100%; padding: 55px 30px 70px; text-align: center; }}
-            .landing-eyebrow {{ font-size: 13px; letter-spacing: 4px; }}
-            .landing-title {{ font-size: 45px; }}
-            .landing-accent {{ margin: 30px auto; }}
-            .landing-description {{ font-size: 17px; margin-left: auto; margin-right: auto; }}
-            .landing-enter {{ min-width: 0; width: 100%; max-width: 420px; }}
-        }}
-        </style>
-        <div class="landing-background"></div>
-        <main class="landing">
-          <section class="landing-brand">
-            <img class="landing-logo" src="{AILYN_LOGO_DATA}" alt="Ailyn House logo">
-            <h1 class="landing-name">Ailyn House</h1>
-            <div class="landing-line"></div>
-          </section>
-          <div class="landing-divider"></div>
-          <section class="landing-workspace">
-            <div class="landing-eyebrow">Project Control System</div>
-            <h2 class="landing-title">BUILD.<br>CONTROL.<br>DELIVER.</h2>
-            <div class="landing-accent"></div>
-            <p class="landing-description">Construction, materials, payroll, and project progress in one place.</p>
-            <a href="?page=workspace" class="landing-enter">ENTER WORKSPACE <span class="landing-arrow">→</span></a>
-          </section>
-        </main>
-        """,
-        unsafe_allow_html=True,
-    )
     st.stop()
 
 # Load persisted state safely
@@ -497,37 +309,13 @@ if "budget_history" not in st.session_state:
     st.session_state.budget_history = []
 if "remaining_money" not in st.session_state:
     st.session_state.remaining_money = 0.0
-if "client_notes" not in st.session_state:
-    st.session_state.client_notes = ""
 if "view" not in st.session_state:
     st.session_state.view = "home"
-if "dashboard_section" not in st.session_state:
-    st.session_state.dashboard_section = "overview"
-if "puzzle_level" not in st.session_state:
-    st.session_state.puzzle_level = 1
-if "puzzle_score" not in st.session_state:
-    st.session_state.puzzle_score = 0
-if "puzzle_streak" not in st.session_state:
-    st.session_state.puzzle_streak = 0
-if "puzzle_seed" not in st.session_state:
-    st.session_state.puzzle_seed = random.SystemRandom().randrange(1, 1_000_000)
-if "math_level" not in st.session_state:
-    st.session_state.math_level = 1
-if "math_score" not in st.session_state:
-    st.session_state.math_score = 0
-if "math_streak" not in st.session_state:
-    st.session_state.math_streak = 0
-if "math_seed" not in st.session_state:
-    st.session_state.math_seed = random.SystemRandom().randrange(1, 1_000_000)
-if "financial_closes" not in st.session_state:
-    st.session_state.financial_closes = {}
-if "offline_mode" not in st.session_state:
-    st.session_state.offline_mode = OFFLINE_MODE
 if st.session_state.view not in {
     "home", "payroll_dashboard", "planner_input", "planner_output", "material",
     "expense", "excess", "ledger", "add_labor", "add_payroll_expense",
     "payroll_remaining", "payroll_ledger", "export", "payroll_export",
-    "receipt_archive", "update", "word_puzzle", "monthly_close", "snake_game",
+    "receipt_archive", "update",
 }:
     st.session_state.view = "home"
 if "selected_role" not in st.session_state:
@@ -550,30 +338,6 @@ if "scanner_camera_mode" not in st.session_state:
     st.session_state.scanner_camera_mode = "Back camera"
 if "dark_mode" not in st.session_state:
     st.session_state.dark_mode = False
-if "dashboard_tracker" not in st.session_state:
-    spent_total = sum(
-        float(record.get("amount", 0))
-        for record in st.session_state.records
-        if record.get("type") in {"material", "expense"}
-    )
-    balance_total = float(st.session_state.budget or 0) - spent_total - sum(
-        float(record.get("amount", 0))
-        for record in st.session_state.records
-        if record.get("type") == "excess"
-    )
-    st.session_state.dashboard_tracker = {
-        "tracker_name": "Main Dashboard Tracker",
-        "status": "Operational",
-        "updated_at": manila_now().isoformat(),
-        "summary": {
-            "budget": float(st.session_state.budget or 0),
-            "spent": float(spent_total),
-            "balance": float(balance_total),
-            "tasks": len(st.session_state.planner_tasks),
-            "workers": len(st.session_state.labor_records),
-        },
-        "history": [],
-    }
 if not os.path.exists(EXCEL_FILE):
     write_excel(st.session_state)
 if not os.path.exists(MATERIALS_EXCEL_FILE) or not os.path.exists(LABOR_EXCEL_FILE):
@@ -581,9 +345,6 @@ if not os.path.exists(MATERIALS_EXCEL_FILE) or not os.path.exists(LABOR_EXCEL_FI
 
 
 def set_view(v):
-    if v == "payroll_dashboard":
-        st.session_state.dashboard_section = "payroll"
-        v = "home"
     st.session_state.view = v
     persist_state()
     st.rerun()
@@ -594,7 +355,7 @@ def set_view(v):
 # Copied from the MAIN receipt implementation.
 # ================================================================
 def save_report_html(report_type, html_content, title="Receipt"):
-    folder = os.path.join(DATA_DIR, "archive", report_type)
+    folder = os.path.join(APP_DIR, "archive", report_type)
     os.makedirs(folder, exist_ok=True)
     safe_title = re.sub(r"[^A-Za-z0-9._-]+", "_", title).strip("._") or "receipt"
     filename = os.path.join(folder, f"{safe_title}_{int(time.time())}.html")
@@ -613,7 +374,7 @@ def save_report_html(report_type, html_content, title="Receipt"):
 
 
 def list_saved_reports(report_type):
-    folder = os.path.join(DATA_DIR, "archive", report_type)
+    folder = os.path.join(APP_DIR, "archive", report_type)
     if not os.path.exists(folder):
         return []
     from pathlib import Path
@@ -623,7 +384,7 @@ def list_saved_reports(report_type):
 def delete_report_file(path):
     if os.path.exists(path):
         os.remove(path)
-    relative_path = os.path.relpath(path, DATA_DIR)
+    relative_path = os.path.relpath(path, APP_DIR)
     if "receipt_archive" in st.session_state:
         st.session_state.receipt_archive = [
             entry for entry in st.session_state.receipt_archive
@@ -660,7 +421,6 @@ def build_html_report(records, budget, custom_title="INVENTORY RECEIPT"):
         kulang_amount = abs(remaining_balance)
     balance_color = "#ffffff" if budget <= 0 else ("#e57373" if remaining_balance < 0 else "#a5d6a7")
 
-    report_title = escape_report_text(custom_title)
     html = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -668,8 +428,9 @@ def build_html_report(records, budget, custom_title="INVENTORY RECEIPT"):
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <style>
-@import url('https://fonts.googleapis.com/css?family=Inter:wght@400;600;700&display=swap');
-body {{ font-family: 'Inter', sans-serif; background-color: #f0f4f0; margin: 0; padding: 20px; color: #333; }}
+@import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Orbitron:wght@600;700;800&display=swap');
+body {{ font-family: 'Akira Expanded', 'Rajdhani', 'Orbitron', sans-serif; font-weight: 700; background-color: #f0f4f0; margin: 0; padding: 20px; color: #333; }}
+.receipt-meta h2 {{ font-family: 'Ethnocentric', 'Orbitron', sans-serif; font-weight: 800; }}
 .receipt-container {{ max-width: 1000px; margin: auto; background: #fff; padding: 30px; border-radius: 4px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); border-top: 10px solid #1b5e20; }}
 .header {{ display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; margin-bottom: 30px; border-bottom: 2px solid #f0f0f0; padding-bottom: 15px; }}
 .company-info h1 {{ color: #1b5e20; margin: 0; font-size: 24px; letter-spacing: -1px; }}
@@ -712,7 +473,7 @@ th.desccol {{ color: #ffffff; }}
 <p>Backup Receiver: <i>{RECEIVER_AILYN}</i></p>
 </div>
 <div class="receipt-meta">
-<h2>{report_title}</h2>
+<h2>{custom_title}</h2>
 <p>Date: {date_now}</p>
 </div>
 </div>
@@ -732,9 +493,9 @@ th.desccol {{ color: #ffffff; }}
     for r in material_and_expense_records:
         html += f"""
 <tr>
-<td>{escape_report_text(r.get('date', ''))}</td>
+<td>{r['date']}</td>
 <td class="qty-col">{r['qty']}</td>
-<td class="desccol">{escape_report_text(r.get('name', ''))}</td>
+<td class="desccol">{r['name']}</td>
 <td class="pricecol">{float(r.get('price', r['amount'])):,.2f}</td>
 <td class="deliverycol">{float(r['delivery']):,.2f}</td>
 <td class="totalcol">PHP {float(r['amount']):,.2f}</td>
@@ -791,7 +552,7 @@ function saveAsImage() {{
     const element = document.getElementById('receiptContent');
     html2canvas(element, {{ scale: 2, useCORS: true }}).then(canvas => {{
         const link = document.createElement('a');
-        link.download = {report_download_name(custom_title)};
+        link.download = '{custom_title.replace(" ", "_")}_Receipt.png';
         link.href = canvas.toDataURL('image/png');
         link.click();
     }});
@@ -809,7 +570,6 @@ def generate_payroll_html(labor_records, expense_records, remaining_money=0.0, c
     sub_total = total_labor + total_expenses
     grand_total = sub_total - (remaining_money or 0.0)
 
-    report_title = escape_report_text(custom_title)
     html = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -819,8 +579,10 @@ def generate_payroll_html(labor_records, expense_records, remaining_money=0.0, c
 <style>
 * {{ box-sizing: border-box; }}
 html, body {{ width: 100%; max-width: 100%; margin: 0; overflow-x: hidden; }}
-@import url('https://fonts.googleapis.com/css?family=Inter:wght@400;600;700&display=swap');
-body {{ font-family: 'Inter', sans-serif !important; background-color: #f0f4f0 !important; color: #333; padding: 20px !important; }}
+@import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Orbitron:wght@600;700;800&display=swap');
+body {{ font-family: 'Akira Expanded', 'Rajdhani', 'Orbitron', sans-serif !important; font-weight: 700; background-color: #f0f4f0 !important; color: #333; padding: 20px !important; }}
+#receiptContent h1, #receiptContent h3 {{ font-family: 'Akira Expanded', 'Rajdhani', 'Orbitron', sans-serif !important; font-weight: 700; }}
+#receiptContent h3 {{ font-family: 'Ethnocentric', 'Orbitron', sans-serif !important; font-weight: 800; }}
 #receiptContent {{ width: min(100%, 1000px); margin: 0 auto !important; background: #fff !important; padding: 30px !important; border-radius: 4px !important; box-shadow: 0 4px 20px rgba(0,0,0,0.08) !important; border-top: 10px solid #1b5e20 !important; }}
 #receiptContent table {{ max-width: 100%; }}
 #receiptContent th {{ background-color: #1b5e20 !important; color: #fff !important; text-transform: uppercase; letter-spacing: 1px; }}
@@ -845,7 +607,7 @@ body {{ font-family: 'Inter', sans-serif !important; background-color: #f0f4f0 !
 }}
 </style>
 </head>
-<body style="font-family: 'Segoe UI', sans-serif; background-color: #f4f7f6; padding: 40px;">
+<body style="font-family: 'Akira Expanded', 'Rajdhani', 'Orbitron', sans-serif; font-weight: 700; background-color: #f4f7f6; padding: 40px;">
 <div class="save-btn-container">
 <button class="save-img-btn" onclick="saveAsImage()">SEE PHOTO & DOWNLOAD IMAGE (Phone & Laptop)</button>
 </div>
@@ -858,7 +620,7 @@ body {{ font-family: 'Inter', sans-serif !important; background-color: #f0f4f0 !
 <p style="color: #777; font-size: 14px; margin: 0;">Management System v3.6 Enterprise</p>
 </td>
 <td style="text-align: right;">
-<h3 style="color: #1b5e20; margin: 0;">{report_title}</h3>
+<h3 style="color: #1b5e20; margin: 0;">{custom_title}</h3>
 <p style="color: #555; font-size: 14px; margin: 5px 0 0 0;">Date: {date_str}</p>
 <p style="color: #777; font-size: 12px; margin: 5px 0 0 0;">Account: {RECEIVER_EMAIL}</p>
 </td>
@@ -883,8 +645,8 @@ body {{ font-family: 'Inter', sans-serif !important; background-color: #f0f4f0 !
         gross = r.get('gross_pay', r['days'] * r['rate'])
         html += f"""
 <tr>
-<td style="padding: 12px; border-bottom: 1px solid #ddd; font-weight: bold;">{escape_report_text(r.get('name', ''))}</td>
-<td style="padding: 12px; border-bottom: 1px solid #ddd; text-align: center;">{escape_report_text(role_display)}</td>
+<td style="padding: 12px; border-bottom: 1px solid #ddd; font-weight: bold;">{r['name']}</td>
+<td style="padding: 12px; border-bottom: 1px solid #ddd; text-align: center;">{role_display}</td>
 <td style="padding: 12px; border-bottom: 1px solid #ddd; text-align: center;">{r['days']:.1f}</td>
 <td style="padding: 12px; border-bottom: 1px solid #ddd; text-align: right;">{gross:,.2f}</td>
 <td style="padding: 12px; border-bottom: 1px solid #ddd; text-align: right; color: #d32f2f;">({r['ca']:,.2f})</td>
@@ -903,7 +665,7 @@ body {{ font-family: 'Inter', sans-serif !important; background-color: #f0f4f0 !
         for e in expense_records:
             html += f"""
 <tr>
-<td colspan="5" style="padding: 10px; border-bottom: 1px solid #ddd;">{escape_report_text(e.get('item', ''))}</td>
+<td colspan="5" style="padding: 10px; border-bottom: 1px solid #ddd;">{e['item']}</td>
 <td style="padding: 10px; border-bottom: 1px solid #ddd; text-align: right; font-weight: bold;">{e['price']:,.2f}</td>
 </tr>"""
 
@@ -945,7 +707,7 @@ function saveAsImage() {{
     const element = document.getElementById('receiptContent');
     html2canvas(element, {{ scale: 2, useCORS: true }}).then(canvas => {{
         const link = document.createElement('a');
-        link.download = {report_download_name(custom_title)};
+        link.download = '{custom_title.replace(" ", "_")}_Receipt.png';
         link.href = canvas.toDataURL('image/png');
         link.click();
     }});
@@ -965,16 +727,6 @@ def clear_all():
     st.session_state.budget_history = []
     st.session_state.remaining_money = 0.0
     st.session_state.receipt_archive = []
-    tracker = st.session_state.get("dashboard_tracker", {})
-    tracker["status"] = "Reset completed"
-    tracker["last_reset_at"] = manila_now().isoformat()
-    tracker["updated_at"] = manila_now().isoformat()
-    tracker.setdefault("history", []).append({
-        "type": "system_reset",
-        "time": manila_now().isoformat(),
-        "details": "Financial records cleared while dashboard tracker remained protected."
-    })
-    st.session_state.dashboard_tracker = tracker
     for photo in st.session_state.get("scanner_photos", []):
         delete_scanner_photo(photo.get("file", ""))
     st.session_state.scanner_photos = []
@@ -1018,8 +770,7 @@ def monthly_spend(month=None):
         if record.get("type") in {"material", "expense"} and month_key(record) == month
     )
     labor = sum(float(record.get("net", 0)) for record in st.session_state.labor_records if month_key(record) == month)
-    payroll_expenses = sum(
-        float(record.get("price", 0)) for record in st.session_state.payroll_expenses if month_key(record) == month)
+    payroll_expenses = sum(float(record.get("price", 0)) for record in st.session_state.payroll_expenses if month_key(record) == month)
     return construction + labor + payroll_expenses
 
 
@@ -1031,21 +782,6 @@ def monthly_construction_spend(month=None):
     )
 
 
-def month_is_closed(month):
-    return is_month_closed(st.session_state.get("financial_closes", {}), month)
-
-
-def available_financial_months():
-    records = (
-        st.session_state.records
-        + st.session_state.labor_records
-        + st.session_state.payroll_expenses
-    )
-    months = {month_key(record) for record in records if month_key(record)}
-    months.add(manila_now().strftime("%Y-%m"))
-    return sorted(months, reverse=True)
-
-
 @st.dialog("Project Details", width="large")
 def project_settings_dialog():
     project = st.session_state.project
@@ -1055,14 +791,11 @@ def project_settings_dialog():
         client_name = st.text_input("Client name", value=project.get("client", ""))
         project_address = st.text_input("Project address", value=project.get("address", ""))
         project_manager = st.text_input("Project manager", value=project.get("manager", ""))
-        project_status = st.selectbox("Status", statuses,
-                                      index=statuses.index(project.get("status", "Active")) if project.get(
-                                          "status") in statuses else 0)
+        project_status = st.selectbox("Status", statuses, index=statuses.index(project.get("status", "Active")) if project.get("status") in statuses else 0)
         target_date_value = project.get("target_date")
         target_date = st.date_input(
             "Target date",
-            value=datetime.strptime(target_date_value, "%Y-%m-%d").date() if target_date_value else datetime.now(
-                PHILIPPINES_TZ).date(),
+            value=datetime.strptime(target_date_value, "%Y-%m-%d").date() if target_date_value else datetime.now(PHILIPPINES_TZ).date(),
         )
         submitted = st.form_submit_button("Save project details", use_container_width=True)
     if submitted:
@@ -1081,8 +814,7 @@ def project_settings_dialog():
 @st.dialog("Photo Scanner", width="large")
 def photo_scanner_dialog():
     photo_category = st.selectbox("Photo category", ["Material", "Expense"], index=0, key="photo_category_select")
-    uploaded_photo = st.file_uploader("Upload or capture a receipt photo", type=["png", "jpg", "jpeg", "webp"],
-                                      key=f"receipt_photo_upload_{st.session_state.get('scanner_input_version', 0)}")
+    uploaded_photo = st.file_uploader("Upload or capture a receipt photo", type=["png", "jpg", "jpeg", "webp"], key=f"receipt_photo_upload_{st.session_state.get('scanner_input_version', 0)}")
 
     if uploaded_photo is not None:
         try:
@@ -1090,8 +822,7 @@ def photo_scanner_dialog():
             st.session_state.scanned_photo_bytes = processed_bytes[0]
             st.session_state.scanned_photo_mime = processed_bytes[1]
             st.session_state.scanned_photo_hash = hashlib.sha256(processed_bytes[0]).hexdigest()
-            st.session_state.scanned_photo_text = scan_photo_text(
-                type("Photo", (), {"getvalue": lambda self: processed_bytes[0]})())
+            st.session_state.scanned_photo_text = scan_photo_text(type("Photo", (), {"getvalue": lambda self: processed_bytes[0]})())
         except TESSERACT_NOT_FOUND_ERROR:
             st.session_state.scanned_photo_text = "OCR is unavailable. Install Tesseract OCR on the server."
         except RuntimeError as error:
@@ -1130,9 +861,7 @@ def photo_scanner_dialog():
                 photo_hash = st.session_state.get("scanned_photo_hash")
                 if not any(photo.get("hash") == photo_hash for photo in st.session_state.scanner_photos):
                     photo_id = str(uuid.uuid4())
-                    relative_path = save_scanner_photo(st.session_state.scanned_photo_bytes,
-                                                       st.session_state.get("scanned_photo_mime", "image/jpeg"),
-                                                       photo_id)
+                    relative_path = save_scanner_photo(st.session_state.scanned_photo_bytes, st.session_state.get("scanned_photo_mime", "image/jpeg"), photo_id)
                     st.session_state.scanner_photos.append({
                         "id": photo_id,
                         "hash": photo_hash,
@@ -1173,16 +902,14 @@ def photo_scanner_dialog():
                     ],
                 })
                 receipt_hash = st.session_state.get("scanned_photo_hash")
-                receipt_already_saved = any(
-                    record.get("source_photo_hash") == receipt_hash for record in st.session_state.records)
+                receipt_already_saved = any(record.get("source_photo_hash") == receipt_hash for record in st.session_state.records)
                 if receipt_already_saved:
                     st.info("This scanned receipt is already saved in the Excel ledger.")
                 elif st.button("SAVE RECEIPT TO EXCEL", use_container_width=True, key="save_scanned_receipt_excel"):
                     if not scanned_fields["name"]:
                         st.warning("The receipt item name was not detected. Enter it in Material Entry before saving.")
                     elif scanned_fields["price"] <= 0:
-                        st.warning(
-                            "The receipt total was not detected. Enter the amount in Material Entry before saving.")
+                        st.warning("The receipt total was not detected. Enter the amount in Material Entry before saving.")
                     else:
                         saved = add_tx(
                             scanned_fields["name"],
@@ -1197,12 +924,9 @@ def photo_scanner_dialog():
                             st.success("Receipt saved to the Excel ledger.")
 
             with st.expander("View scanned text", expanded=False):
-                st.text_area("Recognized text", value=scanned_text, height=120, key="modal_scanned_text", disabled=True,
-                             label_visibility="collapsed")
+                st.text_area("Recognized text", value=scanned_text, height=120, key="modal_scanned_text", disabled=True, label_visibility="collapsed")
 
-            if not scanned_text.startswith("OCR is unavailable") and not scanned_text.startswith(
-                    "The photo could not be read") and st.button("USE SCAN IN MATERIAL ENTRY", use_container_width=True,
-                                                                 key="modal_use_scanned_material"):
+            if not scanned_text.startswith("OCR is unavailable") and not scanned_text.startswith("The photo could not be read") and st.button("USE SCAN IN MATERIAL ENTRY", use_container_width=True, key="modal_use_scanned_material"):
                 st.session_state.material_name = scanned_fields["name"]
                 st.session_state.material_price = scanned_fields["price"] or None
                 st.session_state.material_qty = scanned_fields["qty"]
@@ -1220,8 +944,6 @@ def install_update(uploaded_file, signature):
     source = uploaded_file.getvalue()
     if not source:
         raise ValueError("The uploaded upgrade file is empty.")
-    if len(source) > MAX_UPDATE_UPLOAD_BYTES:
-        raise ValueError("The upgrade file is too large. Maximum size is 2 MB.")
     try:
         ast.parse(source.decode("utf-8"), filename=uploaded_file.name)
     except (UnicodeDecodeError, SyntaxError) as error:
@@ -1234,11 +956,12 @@ def install_update(uploaded_file, signature):
     if not hmac.compare_digest(expected_signature, signature.strip()):
         raise ValueError("The upgrade signature is invalid.")
 
-    backup_path = create_backup()
-    source_backup_path = os.path.join(DATA_DIR, "backups", f"ailyn_source_{int(time.time())}.py.bak")
+    backup_dir = os.path.join(APP_DIR, "backups")
+    os.makedirs(backup_dir, exist_ok=True)
+    backup_path = os.path.join(backup_dir, f"NELL.py.py.{int(time.time())}.bak")
     temporary_path = None
     try:
-        shutil.copy2(__file__, source_backup_path)
+        shutil.copy2(__file__, backup_path)
         with tempfile.NamedTemporaryFile("wb", delete=False, dir=APP_DIR,
                                          prefix=".nell-upgrade-") as temporary:
             temporary.write(source)
@@ -1377,9 +1100,6 @@ def payroll_labor_dialog():
         if not worker.strip() or worked_days <= 0:
             st.warning("Enter a worker name and valid worked days.")
             return
-        if month_is_closed(manila_now().strftime("%Y-%m")):
-            st.warning("This month is financially closed. Reopen it before adding payroll.")
-            return
         gross_pay, full_pay, partial_pay = calculate_labor_pay(worked_days, role)
         st.session_state.labor_records.append({
             "id": str(uuid.uuid4()),
@@ -1415,12 +1135,12 @@ def payroll_ledger_dialog():
         for record in reversed(st.session_state.labor_records)
     ]
     rows.extend({
-                    "Date": record.get("date", ""),
-                    "Worker": record.get("item", ""),
-                    "Role": "Payroll Expense",
-                    "Days": "-",
-                    "Net Pay": f"PHP {float(record.get('price', 0)):,.2f}",
-                } for record in reversed(st.session_state.payroll_expenses))
+        "Date": record.get("date", ""),
+        "Worker": record.get("item", ""),
+        "Role": "Payroll Expense",
+        "Days": "-",
+        "Net Pay": f"PHP {float(record.get('price', 0)):,.2f}",
+    } for record in reversed(st.session_state.payroll_expenses))
     st.dataframe(rows, use_container_width=True, hide_index=True)
     if st.button("OPEN FULL PAYROLL LEDGER", use_container_width=True, key="popup_open_payroll_ledger"):
         set_view("payroll_ledger")
@@ -1443,9 +1163,6 @@ def payroll_report_dialog():
 
 
 def add_tx(name, price, qty, delivery, ttype, sender, record_date=None, details=None):
-    entry_date = record_date or manila_now().date()
-    if month_is_closed(entry_date.strftime("%Y-%m")):
-        return False
     p = float(price or 0.0)
     q = int(qty or 0)
     d = float(delivery or 0.0)
@@ -1455,8 +1172,7 @@ def add_tx(name, price, qty, delivery, ttype, sender, record_date=None, details=
     st.session_state.records.append({
         "id": str(time.time()),
         "date": manila_now().strftime("%b %d, %Y"),
-        "recorded_at": datetime.combine(entry_date, datetime.min.time(),
-                                        PHILIPPINES_TZ).isoformat(),
+        "recorded_at": datetime.combine(record_date or manila_now().date(), datetime.min.time(), PHILIPPINES_TZ).isoformat(),
         "name": name.upper(),
         "price": p,
         "qty": q,
@@ -1523,63 +1239,19 @@ html,body,[class*="css"]{font-family:'Manrope',sans-serif}
 .headbar-subtitle{position:relative;z-index:1;color:#aeeec3;font-size:10px;letter-spacing:.16em;text-transform:uppercase;font-weight:800;margin-left:92px;margin-top:4px}
 .headbar-time{position:relative;z-index:1;color:#c8ffe0!important;font-size:11px!important;font-weight:800!important;background:rgba(255,255,255,.06);border:1px solid rgba(173,255,201,.15);padding:10px 13px;border-radius:13px;box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
 /* glass sidebar */
-section[data-testid="stSidebar"]{
-  background:linear-gradient(180deg,#08130f 0%, #0c1d17 100%)!important;
-  border-right:1px solid rgba(124,255,186,.18)!important;
-  box-shadow:18px 0 55px rgba(0,0,0,.52)!important;
-  backdrop-filter:blur(18px) saturate(150%)!important;
-  -webkit-backdrop-filter:blur(18px) saturate(150%)!important;
-  transition: width .32s cubic-bezier(.22,1,.36,1), transform .32s cubic-bezier(.22,1,.36,1), box-shadow .32s ease, opacity .24s ease !important;
-}
-section[data-testid="stSidebar"] > div{padding:22px 14px 30px!important}
-section[data-testid="stSidebar"] *{color:#eefcf4!important}
-.sidebar-brand{
-  position:relative;overflow:hidden;padding:18px 16px;border-radius:20px;margin-bottom:12px;
-  background:linear-gradient(145deg,#0d2a1f,#071912);
-  border:1px solid rgba(126,255,191,.32);
-  box-shadow:0 16px 32px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.10), 0 0 18px rgba(99,249,167,.12);
-  transition:all .22s ease, transform .3s ease, box-shadow .3s ease;
-}
-.sidebar-brand:hover{transform:translateY(-2px) scale(1.01);border-color:rgba(138,255,201,.58);box-shadow:0 22px 38px rgba(0,0,0,.35),0 0 24px rgba(96,245,169,.18)}
-.sidebar-brand:after{content:"";position:absolute;inset:-30% 20% auto auto;width:120px;height:120px;border-radius:50%;background:radial-gradient(circle,rgba(126,255,191,.22),transparent 60%);pointer-events:none}
-.brand-row{position:relative;z-index:1;display:flex;align-items:center;gap:14px}.brand-logo{width:58px;height:58px;object-fit:contain;filter:drop-shadow(0 10px 16px rgba(0,0,0,.28));transition:transform .22s ease}.sidebar-brand:hover .brand-logo{transform:translateY(-2px) scale(1.06)}.brand-copy{min-width:0}.brand-title{font-family:'Outfit';font-size:16px;font-weight:900;letter-spacing:.07em;line-height:1.08;color:#fff!important}.brand-title span{display:block}.brand-sub{font-size:9px;color:#9af0c0!important;letter-spacing:.15em;text-transform:uppercase;margin-top:7px;font-weight:800}
-section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h3{font-family:'Outfit';font-size:10px!important;letter-spacing:.18em;text-transform:uppercase;color:#7df6b8!important;margin:20px 5px 9px!important;display:flex;align-items:center;gap:9px} section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h3:before{content:'•';font-size:20px;line-height:0;color:#5af0a7;text-shadow:0 0 12px rgba(90,240,167,.9)} section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h3:after{content:'';height:1px;flex:1;background:linear-gradient(90deg,rgba(125,246,184,.38),transparent)}section[data-testid="stSidebar"] hr{border-color:rgba(170,255,198,.10)!important;margin:10px 4px!important}.sidebar-gap{height:8px}.sidebar-live{margin:0 0 12px;padding:8px 10px;border-radius:12px;background:rgba(113,249,175,.08);border:1px solid rgba(113,249,175,.22);color:#abf7c8!important;font-size:9px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;text-align:center;box-shadow:inset 0 1px 0 rgba(255,255,255,.06)}
-.sidebar-section-label{margin:18px 6px 8px;color:#7df6b8!important;font-size:9px!important;line-height:1.3!important;letter-spacing:.18em!important;text-transform:uppercase;font-weight:900;font-family:'Outfit',sans-serif!important;display:flex;align-items:center;gap:9px}
-.sidebar-section-label:before{content:'•';font-size:20px;line-height:0;color:#6ef7b8;text-shadow:0 0 10px rgba(110,247,184,.8)}
-.sidebar-section-label:after{content:'';height:1px;flex:1;background:linear-gradient(90deg,rgba(110,247,184,.46),transparent)}
-section[data-testid="stSidebar"] button{
-  position:relative;overflow:hidden;min-height:48px!important;margin:6px 0!important;padding:0 16px!important;border-radius:14px!important;text-align:left!important;
-  background:linear-gradient(180deg,#0d2019 0%, #091a15 100%)!important;
-  border:1px solid rgba(129,255,190,.18)!important;
-  box-shadow:0 10px 18px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.06)!important;
-  transition:transform .18s ease, box-shadow .18s ease, border-color .18s ease, background .18s ease, filter .18s ease!important;
-  backdrop-filter:blur(14px) saturate(140%)!important;
-  -webkit-backdrop-filter:blur(14px) saturate(140%)!important;
-}
-section[data-testid="stSidebar"] button:before{content:"";position:absolute;inset:0 auto 0 0;width:4px;background:linear-gradient(180deg,#91ffd1,#3ae08b);opacity:0;transition:opacity .18s ease}
-section[data-testid="stSidebar"] button:hover{transform:translateX(6px)!important;border-color:rgba(146,255,203,.7)!important;background:linear-gradient(180deg,#12372b 0%, #0b1d18 100%)!important;box-shadow:0 18px 28px rgba(0,0,0,.26),0 0 18px rgba(88,245,160,.12)!important;filter:saturate(1.1)}
-section[data-testid="stSidebar"] button:hover:before{opacity:1}
-section[data-testid="stSidebar"] button:active{transform:translateX(2px) translateY(1px)!important;box-shadow:0 6px 12px rgba(0,0,0,.2)!important}
-section[data-testid="stSidebar"] button p{font-family:'Roboto','Poppins','Inter',sans-serif!important;font-weight:800!important;font-size:12px!important;letter-spacing:.02em!important}
-.brand-logo,.dashboard-heading img{display:block!important;max-width:100%!important;height:auto!important;object-fit:contain!important;aspect-ratio:1/1!important;border-radius:16px!important}
-html, body, [class*="css"], button, input, textarea, select, .stApp { font-family: 'Roboto', 'Poppins', 'Inter', 'Segoe UI', sans-serif !important; }
-section[data-testid="stSidebar"] > div { background: linear-gradient(180deg, rgba(7,21,18,0.98), rgba(4,13,10,0.96)) !important; border-right: 1px solid rgba(122,255,186,0.16) !important; }
-.sidebar-brand{position:relative;overflow:hidden;padding:16px 14px;border-radius:18px;margin-bottom:12px;background:linear-gradient(135deg,#0c2b22,#071912);border:1px solid rgba(166,255,208,.2);box-shadow:0 18px 32px rgba(0,0,0,.3), inset 0 1px 0 rgba(255,255,255,.10), 0 0 18px rgba(99,249,167,.1);transition:all .22s ease}
-.sidebar-brand:hover{transform:translateY(-2px);border-color:rgba(146,255,203,.52);box-shadow:0 22px 38px rgba(0,0,0,.34),0 0 22px rgba(103,246,171,.12)}
-.brand-row{display:flex;align-items:center;gap:12px;padding:2px 0}.brand-logo{width:54px;height:54px;border-radius:14px;object-fit:cover;background:rgba(255,255,255,.02);padding:5px;border:1px solid rgba(255,255,255,.10)}
-.brand-copy{min-width:0}.brand-title{font-size:15px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;color:#f5fff8;line-height:1.08}.brand-sub{margin-top:6px;font-size:8px;letter-spacing:.16em;text-transform:uppercase;color:#9be7c0;font-weight:800}
-.sidebar-live{margin:0 0 14px;padding:8px 10px;border-radius:12px;background:rgba(117,245,180,.06);border:1px solid rgba(117,245,180,.18);color:#b7f7d2!important;font-size:9px;font-weight:800;letter-spacing:.15em;text-transform:uppercase;text-align:center;box-shadow:inset 0 1px 0 rgba(255,255,255,.05)}
-section[data-testid="stSidebar"] [data-testid="stExpander"]{border:0!important;background:transparent!important;box-shadow:none!important;margin:8px 0!important}
-section[data-testid="stSidebar"] [data-testid="stExpander"] summary{
-  padding:10px 12px 10px 16px!important;border-radius:13px!important;
-  background:linear-gradient(180deg,#102a21 0%, #0b1d18 100%)!important;
-  border:1px solid rgba(134,255,194,.18)!important;border-left:3px solid #69f4b4!important;
-  color:#f5fff8!important;font-family:'Roboto','Poppins',sans-serif!important;font-weight:800!important;letter-spacing:.04em!important;font-size:10px!important;list-style:none!important;
-  box-shadow:0 10px 18px rgba(0,0,0,.18)!important;transition:all .18s ease!important;
-}
-section[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover{transform:translateX(3px);border-color:rgba(137,255,197,.6);box-shadow:0 14px 24px rgba(0,0,0,.24),0 0 18px rgba(105,244,180,.12)!important}
-section[data-testid="stSidebar"] [data-testid="stExpander"] summary::-webkit-details-marker{display:none!important}
-section[data-testid="stSidebar"] [data-testid="stExpander"] .streamlit-expanderContent{padding:8px 0 0!important}
+section[data-testid="stSidebar"]{background:linear-gradient(180deg,rgba(1,13,8,.92),rgba(3,24,14,.88))!important;border-right:1px solid rgba(114,247,176,.12)!important;box-shadow:18px 0 70px rgba(0,0,0,.52)!important;backdrop-filter:blur(22px) saturate(140%)!important;-webkit-backdrop-filter:blur(22px) saturate(140%)!important}
+section[data-testid="stSidebar"]>div{padding:22px 14px 30px!important} section[data-testid="stSidebar"] *{color:#edfff3!important}
+.sidebar-brand{position:relative;overflow:hidden;padding:18px 16px;border-radius:26px;margin-bottom:12px;background:linear-gradient(145deg,rgba(12,65,39,.54),rgba(2,23,14,.38));border:1px solid rgba(114,247,176,.20);box-shadow:0 20px 44px rgba(0,0,0,.38),inset 0 1px 0 rgba(255,255,255,.12),0 0 32px rgba(52,211,125,.06);backdrop-filter:blur(22px) saturate(145%);-webkit-backdrop-filter:blur(22px) saturate(145%);transition:.25s cubic-bezier(.2,.8,.2,1)} .sidebar-brand:hover{transform:translateY(-3px);border-color:rgba(114,247,176,.40);box-shadow:0 26px 52px rgba(0,0,0,.44),0 0 34px rgba(114,247,176,.12),inset 0 1px 0 rgba(255,255,255,.16)}
+.sidebar-brand:after{content:"";position:absolute;inset:-80% 35%;background:rgba(255,255,255,.09);transform:rotate(25deg);animation:scan 7s linear infinite}
+.brand-row{position:relative;z-index:1;display:flex;align-items:center;gap:14px}.brand-logo{width:62px;height:62px;object-fit:contain;filter:drop-shadow(0 8px 16px rgba(0,0,0,.32));transition:.25s ease}.sidebar-brand:hover .brand-logo{transform:translateY(-4px) scale(1.06);filter:drop-shadow(0 14px 26px rgba(114,247,176,.30))}.brand-copy{min-width:0}.brand-title{font-family:'Outfit';font-size:17px;font-weight:900;letter-spacing:.06em;line-height:1.02;color:#fff!important}.brand-title span{display:block}.brand-sub{font-size:9px;color:#8ff1b4!important;letter-spacing:.16em;text-transform:uppercase;margin-top:7px;font-weight:800}
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h3{font-family:'Outfit';font-size:10px!important;letter-spacing:.18em;text-transform:uppercase;color:#72f7b0!important;margin:20px 5px 9px!important;display:flex;align-items:center;gap:9px} section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h3:before{content:'•';font-size:20px;line-height:0;color:#45f39a;text-shadow:0 0 12px rgba(69,243,154,.8)} section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h3:after{content:'';height:1px;flex:1;background:linear-gradient(90deg,rgba(114,247,176,.35),transparent)}section[data-testid="stSidebar"] hr{border-color:rgba(170,255,198,.10)!important;margin:10px 4px!important}.sidebar-gap{height:8px}.sidebar-live{font-size:9px;letter-spacing:.14em;color:#7feeb0!important;font-weight:800;text-align:center;margin:-4px 0 10px;text-shadow:0 0 12px rgba(114,247,176,.18)}
+.sidebar-section-label{margin:20px 6px 10px;color:#72f7b0!important;font-size:10px!important;line-height:1.3!important;letter-spacing:.18em!important;text-transform:uppercase;font-weight:900;font-family:'Outfit',sans-serif!important;display:flex;align-items:center;gap:9px}
+.sidebar-section-label:before{content:'•';font-size:20px;line-height:0;color:#45f39a;text-shadow:0 0 12px rgba(69,243,154,.8)}
+.sidebar-section-label:after{content:'';height:1px;flex:1;background:linear-gradient(90deg,rgba(114,247,176,.35),transparent)}
+section[data-testid="stSidebar"] button{min-height:52px!important;margin:7px 0!important;padding:0 16px!important;border-radius:18px!important;text-align:left!important;background:linear-gradient(145deg,rgba(18,82,48,.48),rgba(2,31,18,.42))!important;border:1px solid rgba(114,247,176,.15)!important;box-shadow:0 7px 0 rgba(1,12,7,.55),0 14px 28px rgba(0,0,0,.24),inset 0 1px 0 rgba(255,255,255,.10)!important;transition:transform .18s cubic-bezier(.2,.8,.2,1),box-shadow .18s,border-color .18s,background .18s!important;backdrop-filter:blur(14px) saturate(135%)!important;-webkit-backdrop-filter:blur(14px) saturate(135%)!important}
+section[data-testid="stSidebar"] button:hover{transform:translate3d(5px,-3px,0)!important;background:linear-gradient(145deg,rgba(28,116,67,.72),rgba(5,47,27,.56))!important;border-color:rgba(114,247,176,.58)!important;box-shadow:0 10px 0 rgba(1,12,7,.70),0 20px 36px rgba(0,0,0,.34),0 0 28px rgba(70,230,132,.16),inset 0 1px 0 rgba(255,255,255,.18)!important}
+section[data-testid="stSidebar"] button:active{transform:translate3d(2px,4px,0)!important;box-shadow:0 2px 0 rgba(1,12,7,.9),0 6px 12px rgba(0,0,0,.3)!important}
+section[data-testid="stSidebar"] button p{font-family:'Manrope'!important;font-weight:800!important;font-size:12px!important;letter-spacing:.01em}
 /* glass controls */
 button,.stDownloadButton>button,.stFormSubmitButton>button{position:relative!important;overflow:hidden!important;min-height:46px!important;border-radius:16px!important;color:#f5fff8!important;font-weight:800!important;background:linear-gradient(145deg,rgba(25,92,54,.88),rgba(5,33,19,.94))!important;border:1px solid rgba(173,255,201,.22)!important;box-shadow:0 6px 0 rgba(2,17,10,.78),0 13px 27px rgba(0,0,0,.25),inset 0 1px 0 rgba(255,255,255,.13)!important;transition:all .17s ease!important}
 button:hover,.stDownloadButton>button:hover,.stFormSubmitButton>button:hover{transform:translateY(-3px)!important;border-color:rgba(114,247,176,.58)!important;box-shadow:0 9px 0 rgba(2,17,10,.78),0 20px 34px rgba(0,0,0,.35),0 0 25px rgba(114,247,176,.13),inset 0 1px 0 rgba(255,255,255,.2)!important}
@@ -1626,31 +1298,6 @@ section[data-testid="stSidebar"] button p{font-size:13px!important;white-space:n
   .headbar-title{font-size:31px!important;}
   section[data-testid="stSidebar"] button{min-height:58px!important;}
   section[data-testid="stSidebar"] button p{font-size:14px!important;}
-}
-@media (min-width:2560px){
-  .stApp {
-    background-position: center center !important;
-    background-size: cover !important;
-  }
-  .block-container {
-    max-width: 2100px !important;
-    padding-left: 42px !important;
-    padding-right: 42px !important;
-    padding-top: 24px !important;
-  }
-  .ops-topbar,
-  .ops-heading,
-  .ops-kpi,
-  .ops-panel,
-  .ops-quick {
-    border-radius: 26px !important;
-  }
-  .ops-kpi-value {
-    font-size: clamp(2.2rem, 2vw, 3.2rem) !important;
-  }
-  .ops-greeting strong {
-    font-size: clamp(2rem, 2vw, 3rem) !important;
-  }
 }
 .save-img-btn{font-weight:900!important;letter-spacing:.02em!important}
 
@@ -1719,27 +1366,6 @@ section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h3{
   .block-container{max-width:1500px!important;padding-top:20px!important;}
   .dashboard-heading-title{font-size:32px;}
 }
-@media (min-width:2560px) {
-  .block-container {
-    max-width: 2100px !important;
-    padding-left: 42px !important;
-    padding-right: 42px !important;
-    padding-top: 24px !important;
-  }
-  .ops-topbar,
-  .ops-heading,
-  .ops-kpi,
-  .ops-panel,
-  .ops-quick {
-    border-radius: 26px !important;
-  }
-  .ops-kpi-value {
-    font-size: clamp(2.2rem, 2vw, 3.2rem) !important;
-  }
-  .ops-greeting strong {
-    font-size: clamp(2rem, 2vw, 3rem) !important;
-  }
-}
 @media(max-width:900px){
 
   .dashboard-heading-title{font-size:25px;}
@@ -1761,8 +1387,6 @@ section[data-testid="stSidebar"] {{
   box-sizing: border-box !important;
   overflow-x: hidden !important;
   min-width: 0 !important;
-  background: linear-gradient(180deg, rgba(4, 13, 10, 0.96), rgba(7, 18, 14, 0.98)) !important;
-  box-shadow: 14px 0 44px rgba(0,0,0,.52) !important;
 }}
 section[data-testid="stSidebar"] > div,
 section[data-testid="stSidebar"] [data-testid="stSidebarContent"] {{
@@ -1770,17 +1394,6 @@ section[data-testid="stSidebar"] [data-testid="stSidebarContent"] {{
   width: 100% !important;
   min-width: 0 !important;
   max-width: 100% !important;
-}}
-@media (min-width: 2560px) {{
-  section[data-testid="stSidebar"] > div {{
-    padding-left: 20px !important;
-    padding-right: 20px !important;
-  }}
-  section[data-testid="stSidebar"] button {{
-    min-height: 60px !important;
-    height: 60px !important;
-    font-size: 14px !important;
-  }}
 }}
 /* Let Streamlit's main area use all space released by the sidebar. */
 [data-testid="stAppViewContainer"] > .main,
@@ -1821,7 +1434,6 @@ section[data-testid="stSidebar"] > div {
   padding: 20px 16px 32px !important;
   overflow-x: hidden !important;
   overflow-y: auto !important;
-  transition: width 0.28s ease, transform 0.28s ease, opacity 0.25s ease !important;
 }
 section[data-testid="stSidebar"] [data-testid="stSidebarContent"],
 section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"],
@@ -1832,7 +1444,6 @@ section[data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] {
   max-width: 100% !important;
   min-width: 0 !important;
   box-sizing: border-box !important;
-  transition: all 0.28s ease !important;
 }
 /* Never allow a child to create a wider sidebar. */
 section[data-testid="stSidebar"] * {
@@ -1853,8 +1464,6 @@ section[data-testid="stSidebar"] select {
   margin: 0 0 16px !important;
   padding: 18px 16px !important;
   overflow: hidden !important;
-  transform: translateY(0) !important;
-  transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease, opacity 0.22s ease !important;
 }
 .brand-row { width:100% !important; min-width:0 !important; }
 .brand-logo { flex:0 0 54px !important; width:54px !important; height:54px !important; }
@@ -1862,7 +1471,7 @@ section[data-testid="stSidebar"] select {
 .brand-title { font-size:16px !important; line-height:1.05 !important; white-space:normal !important; overflow-wrap:anywhere !important; }
 .brand-sub { white-space:normal !important; overflow-wrap:anywhere !important; }
 .sidebar-live { width:100% !important; white-space:normal !important; overflow-wrap:anywhere !important; text-align:center !important; }
-/* Navigation buttons: smooth active/inactive feel without forcing a fixed width. */
+/* Navigation buttons: no forced nowrap, no negative/overflow positioning. */
 section[data-testid="stSidebar"] .stButton,
 section[data-testid="stSidebar"] .stButton > div { width:100% !important; max-width:100% !important; min-width:0 !important; }
 section[data-testid="stSidebar"] .stButton > button:not([data-testid="stSidebarCollapseButton"]):not([aria-label*="Collapse"]):not([aria-label*="Close"]) {
@@ -1874,21 +1483,7 @@ section[data-testid="stSidebar"] .stButton > button:not([data-testid="stSidebarC
   margin:5px 0 !important;
   padding:12px 14px !important;
   overflow:hidden !important;
-  transform: translateX(0) !important;
-  transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease, background 0.22s ease, opacity 0.22s ease !important;
-  opacity: 0.78 !important;
-  background: linear-gradient(180deg, rgba(18, 30, 26, 0.78), rgba(12, 20, 17, 0.9)) !important;
-  border: 1px solid rgba(111, 180, 155, 0.16) !important;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 8px 12px rgba(0,0,0,0.12) !important;
-}
-section[data-testid="stSidebar"] .stButton > button:not([data-testid="stSidebarCollapseButton"]):not([aria-label*="Collapse"]):not([aria-label*="Close"]):hover {
-  transform: translateX(4px) translateY(-1px) !important;
-  opacity: 1 !important;
-  border-color: rgba(134, 255, 203, 0.42) !important;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.07), 0 12px 18px rgba(18, 74, 46, 0.22), 0 0 16px rgba(110, 247, 184, 0.12) !important;
-}
-section[data-testid="stSidebar"] .stButton > button:not([data-testid="stSidebarCollapseButton"]):not([aria-label*="Collapse"]):not([aria-label*="Close"]):active {
-  transform: translateX(2px) translateY(1px) !important;
+  transform:none !important;
 }
 section[data-testid="stSidebar"] .stButton > button p,
 section[data-testid="stSidebar"] .stButton > button span {
@@ -1900,13 +1495,8 @@ section[data-testid="stSidebar"] .stButton > button span {
   text-overflow:clip !important;
   overflow:hidden !important;
   line-height:1.25 !important;
-  transition: opacity 0.2s ease, transform 0.2s ease !important;
 }
-section[data-testid="stSidebar"] .stButton > button:hover p,
-section[data-testid="stSidebar"] .stButton > button:hover span {
-  opacity: 1 !important;
-  transform: translateX(1px) !important;
-}
+section[data-testid="stSidebar"] .stButton > button:hover { transform:translateX(3px) !important; }
 /* Budget controls and columns stay inside the sidebar. */
 section[data-testid="stSidebar"] [data-testid="stHorizontalBlock"] {
   width:100% !important; max-width:100% !important; min-width:0 !important;
@@ -1922,23 +1512,6 @@ button[data-testid="stSidebarCollapseButton"],
 [data-testid="collapsedControl"] button {
   width:42px !important; min-width:42px !important; height:42px !important; min-height:42px !important;
   padding:0 !important; margin:10px !important; border-radius:50% !important;
-  transition: all 0.25s ease !important;
-  box-shadow: 0 10px 18px rgba(0,0,0,0.18) !important;
-}
-button[data-testid="stSidebarCollapseButton"]:hover,
-[data-testid="collapsedControl"] button:hover {
-  transform: scale(1.06) !important;
-  box-shadow: 0 12px 20px rgba(0,0,0,0.2), 0 0 18px rgba(110, 247, 184, 0.14) !important;
-}
-/* Keep the collapsed state soft and visually inactive instead of abruptly disappearing. */
-section[data-testid="stSidebar"][aria-expanded="false"],
-section[data-testid="stSidebar"][aria-hidden="true"] {
-  opacity: 0.92 !important;
-}
-section[data-testid="stSidebar"][aria-expanded="false"] .stButton > button,
-section[data-testid="stSidebar"][aria-hidden="true"] .stButton > button {
-  opacity: 0.6 !important;
-  background: linear-gradient(180deg, rgba(12, 18, 17, 0.76), rgba(9, 14, 12, 0.9)) !important;
 }
 /* Desktop: comfortable sidebar. */
 @media (min-width: 1400px) {
@@ -2023,16 +1596,6 @@ section[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"],
 </style>
 """, unsafe_allow_html=True)
 
-if st.session_state.offline_mode:
-    st.markdown("""
-    <style>
-    /* Local mode avoids remote image dependencies while keeping the system palette. */
-    .stApp {
-        background-image: linear-gradient(135deg, #06170f 0%, #0b3021 54%, #06140d 100%) !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
 if st.session_state.dark_mode:
     st.markdown("""
     <style>
@@ -2051,10 +1614,11 @@ st.markdown("""
 /* Final dashboard presentation layer. The project background and sidebar brand remain unchanged. */
 .block-container { color: #f7f5ee !important; }
 .block-container h1, .block-container h2, .block-container h3 { font-family: 'Outfit', sans-serif !important; letter-spacing: .015em !important; }
-.dashboard-heading { margin-bottom: 12px !important; }
-.dashboard-heading-title { font-size: 30px !important; letter-spacing: .04em !important; text-shadow: 0 2px 18px rgba(0,0,0,.34); }
-.dashboard-heading-sub { display: none !important; }
-.dashboard-welcome { display: none !important; }
+.dashboard-heading { margin-bottom: 8px !important; }
+.dashboard-heading-title { font-size: 31px !important; letter-spacing: .045em !important; text-shadow: 0 2px 18px rgba(0,0,0,.34); }
+.dashboard-heading-sub { color: #8fe0bb !important; letter-spacing: .24em !important; }
+.dashboard-welcome { color: #d4e5dc !important; max-width: 760px !important; line-height: 1.6 !important; }
+.dashboard-welcome b { color: #ffae8f !important; }
 .block-container [data-testid="stMetric"] { min-height: 104px !important; padding: 17px 18px !important; border-radius: 16px !important; background: rgba(12, 38, 29, .82) !important; border: 1px solid rgba(143, 224, 187, .22) !important; box-shadow: 0 12px 28px rgba(0,0,0,.22), inset 0 1px 0 rgba(255,255,255,.09) !important; }
 .block-container [data-testid="stMetric"] label { color: #9ed7bd !important; font-size: 9px !important; letter-spacing: .16em !important; }
 .block-container [data-testid="stMetricValue"] { color: #fffaf2 !important; font-family: 'Outfit', sans-serif !important; font-size: 26px !important; }
@@ -2076,398 +1640,497 @@ st.markdown("""
 
 st.markdown("""
 <style>
-/* Final visual system: full-bleed project background with restrained glass surfaces. */
-[data-testid="stAppViewContainer"],
-[data-testid="stAppViewContainer"] > .main,
-[data-testid="stAppViewContainer"] .main .block-container {
-    background: transparent !important;
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500;600;700;800;900&family=Rajdhani:wght@500;600;700&display=swap');
+
+:root {
+    --glass-green: rgba(77, 255, 171, 0.11);
+    --glass-green-strong: rgba(77, 255, 171, 0.19);
+    --glass-edge: rgba(177, 255, 218, 0.34);
+    --glass-light: rgba(225, 255, 239, 0.14);
 }
-.block-container {
-    width: min(100%, 1540px) !important;
-    max-width: 1540px !important;
-    margin: 0 auto !important;
-    padding: 24px 34px 48px !important;
-    border: 0 !important;
-    border-radius: 0 !important;
-    box-shadow: none !important;
-    backdrop-filter: none !important;
+
+html, body, button, input, textarea, select, [class*="css"] {
+    font-family: 'Akira Expanded', 'Orbitron', 'Rajdhani', sans-serif !important;
+    letter-spacing: .015em;
+}
+.block-container h1, .block-container h2, .block-container h3,
+.dashboard-heading-title, .section-title, .schedule-title,
+.brand-title, .budget-title {
+    font-family: 'Akira Expanded', 'Orbitron', sans-serif !important;
+    letter-spacing: .045em !important;
+}
+
+section[data-testid="stSidebar"],
+section[data-testid="stSidebar"] > div,
+.block-container,
+.dash-section,
+[data-testid="stMetric"],
+[data-testid="stExpander"],
+.sidebar-brand,
+.sidebar-budget-card {
+    background: linear-gradient(135deg, rgba(10, 75, 46, .34), rgba(4, 38, 25, .24)) !important;
+    border-color: var(--glass-edge) !important;
+    box-shadow: 0 18px 42px rgba(0, 24, 13, .22), inset 0 1px 0 var(--glass-light) !important;
+    backdrop-filter: blur(24px) saturate(145%) !important;
+    -webkit-backdrop-filter: blur(24px) saturate(145%) !important;
+}
+
+.dash-section,
+[data-testid="stMetric"] {
+    position: relative !important;
+    overflow: hidden !important;
+    isolation: isolate;
+    transition: transform .28s cubic-bezier(.2,.8,.2,1), border-color .28s ease, box-shadow .28s ease !important;
+}
+.dash-section::before,
+[data-testid="stMetric"]::before,
+.sidebar-brand::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background: linear-gradient(112deg, transparent 18%, rgba(217, 255, 235, .14) 42%, transparent 62%);
+    transform: translateX(-135%);
+    animation: glassLightSweep 8s ease-in-out infinite;
+}
+.dash-section:hover,
+[data-testid="stMetric"]:hover {
+    transform: translateY(-4px) !important;
+    border-color: rgba(143, 255, 198, .64) !important;
+    box-shadow: 0 24px 50px rgba(0, 45, 23, .28), 0 0 28px rgba(90, 255, 174, .15), inset 0 1px 0 rgba(240, 255, 246, .22) !important;
+}
+.integrated-control-strip { margin: 18px 0 2px !important; padding: 18px 20px !important; }
+.integrated-control-strip .section-head span { color: #a9f8ca !important; font-size: 10px; letter-spacing: .12em; }
+.integrated-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) 1.25fr; gap: 10px; align-items: stretch; }
+.integrated-item, .integrated-total { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 13px 12px; border: 1px solid rgba(176,255,216,.17); border-radius: 14px; background: rgba(133,255,191,.07); }
+.integrated-item small, .integrated-total small { display: block; color: #a8d9bb; font-size: 9px; letter-spacing: .11em; font-weight: 700; white-space: nowrap; }
+.integrated-item strong { display: block; margin-top: 5px; color: #f5fff8; font-family: 'Orbitron', sans-serif; font-size: 14px; white-space: nowrap; }
+.integrated-icon { display: grid; place-items: center; width: 32px; height: 32px; flex: 0 0 32px; color: #8effc0; border: 1px solid rgba(142,255,192,.3); border-radius: 10px; background: rgba(113,255,177,.11); box-shadow: 0 0 16px rgba(113,255,177,.12); }
+.integrated-total { display: block; border-color: rgba(255,188,126,.3); background: linear-gradient(135deg, rgba(255,185,115,.11), rgba(113,255,177,.08)); }
+.integrated-total strong { display: block; margin-top: 4px; color: #ffd0a4; font-family: 'Orbitron', sans-serif; font-size: 18px; }
+.integrated-total span { display: block; margin-top: 5px; color: #b9d9c5; font-size: 10px; }
+@media (max-width: 1100px) { .integrated-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .integrated-total { grid-column: span 2; } }
+@media (max-width: 600px) { .integrated-grid { grid-template-columns: 1fr; } .integrated-total { grid-column: auto; } .integrated-item strong { font-size: 13px; } }
+
+section[data-testid="stSidebar"] .stButton > button,
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary {
+    background: rgba(45, 173, 108, .13) !important;
+    border-color: rgba(160, 255, 205, .28) !important;
+    box-shadow: inset 0 1px 0 rgba(240,255,246,.14), 0 10px 24px rgba(0, 45, 23, .16) !important;
+    transition: transform .24s ease, background .24s ease, box-shadow .24s ease, border-color .24s ease !important;
+}
+section[data-testid="stSidebar"] .stButton > button:hover,
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover {
+    background: rgba(94, 255, 177, .24) !important;
+    box-shadow: 0 0 24px rgba(105, 255, 184, .18), inset 0 1px 0 rgba(240,255,246,.24) !important;
+}
+
+/* Emerald construction console: deep green glass with a controlled floating lift. */
+section[data-testid="stSidebar"],
+section[data-testid="stSidebar"] > div {
+    background:
+        radial-gradient(circle at 12% 6%, rgba(74, 255, 164, .16), transparent 28%),
+        linear-gradient(160deg, rgba(2, 53, 29, .96), rgba(1, 24, 14, .98) 56%, rgba(0, 12, 8, 1)) !important;
+}
+section[data-testid="stSidebar"] .sidebar-brand,
+section[data-testid="stSidebar"] .sidebar-budget-card,
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary,
+section[data-testid="stSidebar"] .stButton > button {
+    font-family: 'Bank Gothic', 'Rajdhani', 'Orbitron', sans-serif !important;
+    background: linear-gradient(135deg, rgba(15, 118, 66, .28), rgba(2, 51, 28, .38) 52%, rgba(0, 24, 13, .52)) !important;
+    border-color: rgba(104, 255, 171, .34) !important;
+}
+section[data-testid="stSidebar"] .stButton > button,
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary {
+    min-height: 50px !important;
+    padding: 12px 15px !important;
+    font-size: 12px !important;
+    font-weight: 700 !important;
+    letter-spacing: .035em !important;
+    line-height: 1.15 !important;
+    text-shadow: 0 1px 10px rgba(115, 255, 181, .12);
+    animation: sidebarFloat 6s ease-in-out infinite;
+}
+section[data-testid="stSidebar"] .stButton > button p,
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary,
+section[data-testid="stSidebar"] .sidebar-live,
+section[data-testid="stSidebar"] .sidebar-offline,
+section[data-testid="stSidebar"] .budget-title,
+section[data-testid="stSidebar"] .stCaption {
+    font-family: 'Bank Gothic', 'Rajdhani', 'Orbitron', sans-serif !important;
+    letter-spacing: .045em !important;
+}
+section[data-testid="stSidebar"] .stButton > button p { font-size: 12px !important; }
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary { font-size: 11px !important; text-transform: uppercase; }
+section[data-testid="stSidebar"] .sidebar-live { font-size: 10px !important; color: #8dffc2 !important; }
+section[data-testid="stSidebar"] .brand-title { font-size: 18px !important; letter-spacing: .075em !important; }
+section[data-testid="stSidebar"] .brand-sub { font-family: 'Bank Gothic', 'Rajdhani', sans-serif !important; font-size: 10px !important; letter-spacing: .12em !important; }
+section[data-testid="stSidebar"] .budget-title { font-size: 13px !important; color: #b1ffd0 !important; }
+section[data-testid="stSidebar"] .stButton > button:nth-child(odd) { animation-delay: -.8s; }
+section[data-testid="stSidebar"] .stButton > button:nth-child(even) { animation-delay: -1.6s; }
+button,
+[role="button"],
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary {
+    font-family: 'Ethnocentric', 'Orbitron', 'Rajdhani', sans-serif !important;
+    font-weight: 800 !important;
+    letter-spacing: .035em !important;
+    text-transform: uppercase;
+}
+button:not([data-testid="stSidebarCollapseButton"]),
+[role="button"],
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary {
+    position: relative !important;
+    border-radius: 12px 26px 12px 26px !important;
+    clip-path: polygon(0 16%, 5% 0, 95% 0, 100% 16%, 100% 84%, 95% 100%, 5% 100%, 0 84%);
+    transition: transform .2s cubic-bezier(.2,.8,.2,1), background .2s ease, box-shadow .2s ease, filter .2s ease !important;
+}
+button:not([data-testid="stSidebarCollapseButton"]):hover,
+[role="button"]:hover,
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover {
+    filter: brightness(1.14) saturate(1.18) !important;
+    box-shadow: 0 0 0 1px rgba(126,255,190,.48), 0 0 26px rgba(73,255,163,.22), inset 0 1px 0 rgba(240,255,246,.22) !important;
+}
+button:not([data-testid="stSidebarCollapseButton"]):focus-visible,
+[role="button"]:focus-visible,
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary:focus-visible {
+    outline: 2px solid #b8ffd5 !important;
+    outline-offset: 3px !important;
+}
+section[data-testid="stSidebar"] .stButton > button::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(105deg, transparent 25%, rgba(202, 255, 225, .12) 48%, transparent 70%);
+    transform: translateX(-120%);
+    animation: sidebarLightPass 7s ease-in-out infinite;
+}
+@keyframes sidebarFloat {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-2px); }
+}
+@keyframes sidebarLightPass {
+    0%, 58% { transform: translateX(-120%); opacity: 0; }
+    68% { opacity: 1; }
+    84%, 100% { transform: translateX(120%); opacity: 0; }
+}
+@media (max-width: 700px) {
+    section[data-testid="stSidebar"] .stButton > button { min-height: 47px !important; padding: 10px 12px !important; font-size: 11px !important; }
+    section[data-testid="stSidebar"] .stButton > button p { font-size: 11px !important; }
+    section[data-testid="stSidebar"] .brand-title { font-size: 15px !important; }
+}
+
+@keyframes glassLightSweep {
+    0%, 48% { transform: translateX(-135%); opacity: 0; }
+    58% { opacity: 1; }
+    82%, 100% { transform: translateX(135%); opacity: 0; }
+}
+@media (hover: none), (pointer: coarse) {
+    .dash-section:active,
+    [data-testid="stMetric"]:active,
+    section[data-testid="stSidebar"] .stButton > button:active,
+    section[data-testid="stSidebar"] [data-testid="stExpander"] summary:active {
+        transform: none !important;
+        background: rgba(105, 255, 184, .23) !important;
+        border-color: rgba(196, 255, 222, .72) !important;
+        box-shadow: 0 0 32px rgba(105, 255, 184, .32), inset 0 1px 0 rgba(240,255,246,.26) !important;
+        filter: brightness(1.12) saturate(1.16) !important;
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .dash-section::before, [data-testid="stMetric"]::before, .sidebar-brand::before,
+    section[data-testid="stSidebar"] .stButton > button,
+    section[data-testid="stSidebar"] .stButton > button::after,
+    section[data-testid="stSidebar"] [data-testid="stExpander"] summary { animation: none !important; }
+}
+
+/* Full automotive emerald system: one shape language across every surface. */
+:root {
+    --emerald-0: #01130b;
+    --emerald-1: #022a18;
+    --emerald-2: #075b31;
+    --emerald-3: #13a85d;
+    --emerald-light: #8dffc2;
+    --emerald-glass: rgba(15, 116, 67, .20);
+    --emerald-glass-dark: rgba(1, 27, 15, .54);
 }
 .stApp {
-    background-image:
-        linear-gradient(115deg, rgba(2, 12, 8, .42), rgba(3, 27, 17, .66)),
-        url("https://images.unsplash.com/photo-1600585154340-be6161a56a0c") !important;
-    background-size: cover !important;
-    background-position: center !important;
-    background-attachment: fixed !important;
+    background:
+        radial-gradient(circle at 8% 14%, rgba(46, 255, 157, .16), transparent 27%),
+        radial-gradient(circle at 92% 78%, rgba(0, 181, 101, .14), transparent 30%),
+        linear-gradient(135deg, var(--emerald-0) 0%, var(--emerald-1) 48%, #000d08 100%) !important;
 }
-.dashboard-heading {
-    justify-content: center !important;
-    align-items: center !important;
-    gap: 16px !important;
-    margin: 4px auto 18px !important;
-    filter: drop-shadow(0 12px 24px rgba(0, 0, 0, .28));
+.stApp::before {
+    background: linear-gradient(125deg, rgba(0, 255, 143, .08), transparent 34%, rgba(0, 104, 55, .14) 72%, transparent) !important;
+    animation: systemAurora 14s ease-in-out infinite alternate;
 }
-.dashboard-heading img {
-    width: 66px !important;
-    height: 66px !important;
-    padding: 7px !important;
-    border: 1px solid rgba(174, 255, 205, .28) !important;
-    border-radius: 20px !important;
-    background: rgba(4, 31, 20, .72) !important;
+.block-container,
+.dash-section,
+[data-testid="stMetric"],
+[data-testid="stExpander"],
+.cal-card,
+.welcome-card,
+.ops-panel,
+.newdash-panel,
+.integrated-item,
+.integrated-total,
+.sidebar-brand,
+.sidebar-budget-card {
+    border-radius: 10px 28px 10px 28px !important;
+    background: linear-gradient(135deg, rgba(13, 107, 60, .22), rgba(2, 44, 24, .34) 52%, rgba(0, 18, 10, .48)) !important;
+    border: 1px solid rgba(124, 255, 182, .28) !important;
+    box-shadow: 0 18px 42px rgba(0, 19, 10, .28), inset 0 1px 0 rgba(224, 255, 238, .13) !important;
+    backdrop-filter: blur(24px) saturate(150%) !important;
+    -webkit-backdrop-filter: blur(24px) saturate(150%) !important;
 }
-.dashboard-heading-title {
-    color: #f7fff9 !important;
-    font-size: 32px !important;
-    letter-spacing: .04em !important;
-    line-height: 1 !important;
+.block-container {
+    background: linear-gradient(135deg, rgba(1, 31, 17, .48), rgba(2, 68, 36, .20)) !important;
+    border-color: rgba(142, 255, 196, .22) !important;
 }
 .dash-section,
 [data-testid="stMetric"],
-[data-testid="stExpander"] {
-    background: linear-gradient(145deg, rgba(12, 53, 34, .70), rgba(3, 24, 16, .64)) !important;
-    border: 1px solid rgba(184, 255, 211, .18) !important;
-    box-shadow: 0 20px 45px rgba(0, 0, 0, .24), inset 0 1px 0 rgba(255, 255, 255, .11) !important;
-    backdrop-filter: blur(22px) saturate(135%) !important;
-    -webkit-backdrop-filter: blur(22px) saturate(135%) !important;
+.cal-card,
+.ops-panel,
+.newdash-panel {
+    animation: surfaceFloat 8s ease-in-out infinite;
 }
-.stAppViewContainer .main .block-container {
-    animation: appReveal .42s ease-out both;
+.dash-section:nth-of-type(2n),
+[data-testid="stMetric"]:nth-of-type(2n),
+.cal-card:nth-child(2n),
+.ops-panel:nth-child(2n) { animation-delay: -2.4s; }
+.dash-section:nth-of-type(3n),
+[data-testid="stMetric"]:nth-of-type(3n),
+.cal-card:nth-child(3n) { animation-delay: -4.8s; }
+.section-head,
+.newdash-panel-head,
+.ops-panel-head { border-bottom-color: rgba(141, 255, 194, .22) !important; }
+div[data-baseweb="input"],
+div[data-baseweb="base-input"],
+textarea,
+div[data-baseweb="select"] > div,
+input {
+    border-radius: 9px 20px 9px 20px !important;
+    background: linear-gradient(135deg, rgba(6, 74, 40, .34), rgba(0, 24, 13, .55)) !important;
+    border-color: rgba(132, 255, 188, .30) !important;
 }
-.search-result-count {
-    margin: -4px 0 12px;
-    color: #aeeec3;
-    font-size: 11px;
-    font-weight: 800;
-    letter-spacing: .08em;
-    text-transform: uppercase;
+.stAlert,
+[data-testid="stNotification"] {
+    border-radius: 9px 24px 9px 24px !important;
+    background: linear-gradient(135deg, rgba(12, 115, 63, .25), rgba(0, 37, 20, .46)) !important;
+    border-color: rgba(141, 255, 194, .32) !important;
 }
-.chart-panel, .notes-panel {
-    min-height: 300px !important;
-    margin-top: 18px !important;
-    padding: 20px 22px !important;
+table, [data-testid="stDataFrame"] {
+    border-radius: 9px 24px 9px 24px !important;
+    overflow: hidden !important;
+    border: 1px solid rgba(128, 255, 185, .24) !important;
+    box-shadow: 0 15px 35px rgba(0, 22, 12, .22) !important;
 }
-.chart-panel [data-testid="stArrowVegaLiteChart"],
-.chart-panel [data-testid="stVegaLiteChart"] {
-    background: transparent !important;
+@keyframes systemAurora {
+    from { filter: hue-rotate(0deg) brightness(1); transform: scale(1); }
+    to { filter: hue-rotate(12deg) brightness(1.08); transform: scale(1.025); }
 }
-.notes-panel textarea {
-    min-height: 150px !important;
+@keyframes surfaceFloat {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-3px); }
 }
-.puzzle-card {
-    max-width: 720px;
-    margin: 20px auto;
-    padding: 34px 24px;
-    text-align: center;
-    border: 1px solid rgba(184, 255, 211, .24);
-    border-radius: 24px;
-    background: linear-gradient(145deg, rgba(12, 64, 39, .78), rgba(3, 24, 16, .76));
-    box-shadow: 0 22px 48px rgba(0, 0, 0, .28), inset 0 1px 0 rgba(255, 255, 255, .12);
-    backdrop-filter: blur(22px) saturate(135%);
-}
-.puzzle-level { color: #aeeec3; font-size: 11px; font-weight: 900; letter-spacing: .22em; }
-.puzzle-scramble { margin: 18px 0 12px; color: #f7fff9; font-family: 'Outfit', sans-serif; font-size: clamp(34px, 8vw, 62px); font-weight: 900; letter-spacing: .18em; }
-.puzzle-hint { color: #c8e8d2; font-size: 13px; }
-.welcome-page {
-    min-height: 78vh !important;
-    padding: 34px 16px 20px !important;
-    background: transparent !important;
-}
-.welcome-card {
-    background: linear-gradient(145deg, rgba(12, 53, 34, .74), rgba(3, 24, 16, .72)) !important;
-    border: 1px solid rgba(184, 255, 211, .24) !important;
-    box-shadow: 0 24px 54px rgba(0, 0, 0, .28), inset 0 1px 0 rgba(255, 255, 255, .12) !important;
-    backdrop-filter: blur(22px) saturate(135%) !important;
-    -webkit-backdrop-filter: blur(22px) saturate(135%) !important;
-}
-button[kind="primary"], [data-testid="stFormSubmitButton"] button {
-    background: linear-gradient(145deg, #1b8b52, #0b4c2e) !important;
-    border-color: rgba(174, 255, 205, .34) !important;
-    box-shadow: 0 8px 0 rgba(2, 17, 10, .62), 0 16px 30px rgba(0, 0, 0, .24), inset 0 1px 0 rgba(255, 255, 255, .14) !important;
-}
-section[data-testid="stSidebar"] > div {
-    padding: 16px 13px 24px !important;
-}
-section[data-testid="stSidebar"] [data-testid="stExpander"] {
-    margin: 5px 0 !important;
-}
-section[data-testid="stSidebar"] .stButton > button {
-    min-height: 44px !important;
-    margin: 4px 0 !important;
-    padding: 10px 13px !important;
-    border-radius: 14px !important;
-}
-section[data-testid="stSidebar"] [data-testid="stExpander"] summary {
-    padding: 9px 11px 9px 13px !important;
-}
-section[data-testid="stSidebar"] .sidebar-live,
-section[data-testid="stSidebar"] .sidebar-offline {
-    margin-bottom: 8px !important;
-}
-.sidebar-offline {
-    margin: 0 0 10px;
-    padding: 7px 9px;
-    border: 1px solid rgba(114, 247, 176, .18);
-    border-radius: 10px;
-    color: #9fe5b8 !important;
-    background: rgba(114, 247, 176, .06);
-    font-size: 8px;
-    font-weight: 900;
-    letter-spacing: .12em;
-    text-align: center;
-}
-.ops-topbar { display:flex; align-items:center; gap:14px; margin:-4px 0 20px; }
-.ops-menu { color:#72f7b0; font-size:22px; padding:4px 9px; border:1px solid rgba(184,255,211,.18); border-radius:10px; background:rgba(3,28,18,.48); }
-.ops-search { flex:1; max-width:620px; padding:11px 16px; color:#bfead0; font-size:11px; border:1px solid rgba(184,255,211,.16); border-radius:11px; background:rgba(3,28,18,.52); }
-.ops-heading { display:flex; align-items:flex-end; justify-content:space-between; gap:20px; margin:4px 0 20px; }
-.ops-greeting { color:#b8dfc8; font-size:16px; }
-.ops-greeting strong { display:block; color:#fff; font-family:'Outfit',sans-serif; font-size:37px; line-height:.98; }
-.ops-greeting span { display:block; margin-top:8px; color:#9fc5ae; font-size:12px; }
-.ops-quote { max-width:250px; padding-left:16px; color:#c9ead6; font-size:12px; line-height:1.5; border-left:3px solid #72f7b0; }
-.ops-kpi-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-bottom:15px; }
-.ops-kpi { min-height:84px; padding:15px; border:1px solid rgba(184,255,211,.20); border-radius:15px; background:linear-gradient(145deg,rgba(12,53,34,.70),rgba(3,24,16,.64)); box-shadow:0 14px 30px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.10); backdrop-filter:blur(18px); }
-.ops-kpi-label { color:#a9d9ba; font-size:9px; font-weight:800; letter-spacing:.12em; text-transform:uppercase; }
-.ops-kpi-value { margin-top:8px; color:#fff; font-family:'Outfit',sans-serif; font-size:25px; font-weight:900; }
-.ops-kpi-trend { margin-top:4px; color:#72f7b0; font-size:10px; }
-.ops-grid { display:grid; grid-template-columns:1.7fr .9fr; gap:14px; margin-bottom:14px; }
-.ops-panel { overflow:hidden; border:1px solid rgba(184,255,211,.20); border-radius:15px; background:linear-gradient(145deg,rgba(12,53,34,.66),rgba(3,24,16,.60)); box-shadow:0 18px 36px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.10); backdrop-filter:blur(18px); }
-.ops-panel-head { display:flex; justify-content:space-between; padding:15px 16px; border-bottom:1px solid rgba(184,255,211,.12); color:#fff; font-size:12px; font-weight:900; letter-spacing:.08em; text-transform:uppercase; }
-.ops-panel-head span { color:#72f7b0; font-size:10px; }
-.ops-table { width:100%; border-collapse:collapse; font-size:10px; }
-.ops-table th { padding:10px 12px; color:#82b99a; font-size:8px; letter-spacing:.12em; text-align:left; text-transform:uppercase; }
-.ops-table td { padding:11px 12px; color:#d6f1df; border-top:1px solid rgba(184,255,211,.08); }
-.ops-status { display:inline-block; padding:4px 8px; border-radius:9px; color:#d9ffe8; background:rgba(32,180,106,.32); }
-.ops-status-muted { background:rgba(126,154,161,.30); }
-.ops-progress { min-width:76px; height:6px; overflow:hidden; border-radius:9px; background:rgba(114,247,176,.12); }
-.ops-progress i { display:block; height:100%; border-radius:inherit; background:#22d58c; }
-.ops-status-list { padding:14px 16px; }
-.ops-status-row { display:grid; grid-template-columns:10px 1fr auto; gap:9px; align-items:center; padding:10px 0; color:#cdebd8; font-size:11px; border-bottom:1px solid rgba(184,255,211,.08); }
-.ops-status-row:last-child { border-bottom:0; }
-.ops-dot { width:10px; height:10px; border-radius:50%; background:#32da91; box-shadow:0 0 12px rgba(50,218,145,.45); }
-.ops-dot.warn { background:#efbd49; box-shadow:0 0 12px rgba(239,189,73,.35); }
-.ops-dot.muted { background:#91a8af; box-shadow:none; }
-.ops-activity { padding:4px 16px 10px; }
-.ops-activity-row { display:grid; grid-template-columns:28px 1fr auto; gap:10px; align-items:center; padding:10px 0; color:#cdebd8; font-size:10px; border-bottom:1px solid rgba(184,255,211,.08); }
-.ops-activity-icon { display:grid; place-items:center; width:28px; height:28px; border-radius:9px; color:#72f7b0; background:rgba(47,190,123,.18); }
-.ops-activity-row small { display:block; margin-top:3px; color:#82ae94; }
-.ops-quick-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }
-.ops-quick { padding:14px; color:#d8f6e1; text-align:center; border:1px solid rgba(184,255,211,.18); border-radius:14px; background:rgba(5,35,22,.58); }
-.ops-quick b { display:block; color:#fff; font-size:12px; }
-.ops-quick span { display:block; margin-top:6px; color:#8ebba0; font-size:9px; }
-@media(max-width:900px){.ops-kpi-grid,.ops-quick-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.ops-grid{grid-template-columns:1fr}.ops-heading{align-items:flex-start;flex-direction:column}}
-@media(max-width:600px){.ops-greeting strong{font-size:30px}.ops-quote{max-width:none}.ops-kpi-grid,.ops-quick-grid{gap:8px}.ops-kpi{padding:12px}}
-.mobile-nav-marker {
-    display: none !important;
-}
-div:has(> .mobile-nav-marker) + div[data-testid="stHorizontalBlock"] {
-    display: none !important;
-}
-@keyframes appReveal {
-    from { opacity: 0; transform: translateY(7px); }
-    to { opacity: 1; transform: translateY(0); }
+@media (hover: none), (pointer: coarse) {
+    .dash-section:active,
+    [data-testid="stMetric"]:active,
+    .cal-card:active,
+    .ops-panel:active,
+    .newdash-panel:active,
+    .integrated-item:active,
+    .integrated-total:active {
+        transform: none !important;
+        background: linear-gradient(135deg, rgba(55, 229, 139, .30), rgba(3, 71, 37, .40)) !important;
+        border-color: rgba(192, 255, 220, .70) !important;
+        box-shadow: 0 0 34px rgba(74, 255, 164, .28), inset 0 1px 0 rgba(239, 255, 246, .26) !important;
+    }
 }
 @media (prefers-reduced-motion: reduce) {
-    .stAppViewContainer .main .block-container { animation: none !important; }
+    .stApp::before,
+    .dash-section,
+    [data-testid="stMetric"],
+    .cal-card,
+    .ops-panel,
+    .newdash-panel { animation: none !important; }
 }
-/* Keep the visible logo card as the only home control. */
-section[data-testid="stSidebar"] .sidebar-brand {
-    display: block !important;
-    min-height: 104px !important;
-    padding: 18px 16px !important;
-    margin-bottom: 0 !important;
-    border: 1px solid rgba(157, 255, 198, .34) !important;
-    border-radius: 22px !important;
-    background: linear-gradient(145deg, rgba(9, 52, 34, .84), rgba(3, 23, 16, .82)) !important;
-    box-shadow: 0 20px 38px rgba(0, 0, 0, .30), inset 0 1px 0 rgba(255, 255, 255, .12), 0 0 24px rgba(92, 245, 163, .08) !important;
+
+/* Luxury finish: preserve all existing dimensions while changing the surface language. */
+:root {
+    --lux-jade: #063d27;
+    --lux-emerald: #0b7b4a;
+    --lux-highlight: #a8ffd0;
+    --lux-champagne: #e8c98b;
+    --lux-shadow: rgba(0, 20, 12, .34);
 }
-section[data-testid="stSidebar"] .sidebar-brand .brand-row {
-    align-items: center !important;
-    gap: 14px !important;
+.stApp {
+    background:
+        radial-gradient(circle at 18% 8%, rgba(117, 255, 186, .14), transparent 24%),
+        radial-gradient(circle at 84% 88%, rgba(232, 201, 139, .09), transparent 26%),
+        linear-gradient(140deg, #01150c 0%, #032e1d 46%, #001009 100%) !important;
 }
-section[data-testid="stSidebar"] .sidebar-brand .brand-logo {
-    flex: 0 0 58px !important;
-    width: 58px !important;
-    height: 58px !important;
-    padding: 8px !important;
-    border: 1px solid rgba(176, 255, 207, .24) !important;
-    border-radius: 17px !important;
-    background: rgba(2, 25, 16, .56) !important;
+.block-container,
+.dash-section,
+[data-testid="stMetric"],
+[data-testid="stExpander"],
+.cal-card,
+.ops-panel,
+.newdash-panel,
+.integrated-item,
+.integrated-total,
+.sidebar-brand,
+.sidebar-budget-card {
+    background: linear-gradient(145deg, rgba(19, 113, 70, .20), rgba(2, 42, 26, .34) 55%, rgba(0, 18, 10, .52)) !important;
+    border-color: rgba(168, 255, 208, .30) !important;
+    box-shadow: 0 18px 42px var(--lux-shadow), inset 0 1px 0 rgba(242, 255, 247, .15) !important;
 }
-section[data-testid="stSidebar"] .sidebar-brand .brand-title {
-    font-size: 16px !important;
-    line-height: 1.04 !important;
-    letter-spacing: .055em !important;
+.section-head span,
+.integrated-control-strip .section-head span,
+.dashboard-heading-sub,
+.sidebar-live { color: var(--lux-highlight) !important; }
+.integrated-total { border-color: rgba(232, 201, 139, .42) !important; }
+.integrated-total strong { color: var(--lux-champagne) !important; }
+.cal-date-badge,
+.cal-status-tag,
+.newdash-status,
+.ops-status { border-color: rgba(232, 201, 139, .35) !important; }
+section[data-testid="stSidebar"] .stButton > button,
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary {
+    background: linear-gradient(135deg, rgba(14, 117, 69, .24), rgba(2, 47, 28, .42)) !important;
+    border-color: rgba(168, 255, 208, .34) !important;
 }
-section[data-testid="stSidebar"] .sidebar-brand .brand-sub {
-    margin-top: 8px !important;
-    font-size: 8px !important;
-    letter-spacing: .16em !important;
+button:hover,
+[role="button"]:hover,
+section[data-testid="stSidebar"] [data-testid="stExpander"] summary:hover {
+    background: linear-gradient(135deg, rgba(31, 157, 93, .34), rgba(3, 70, 41, .48)) !important;
+    border-color: rgba(191, 255, 220, .68) !important;
 }
-.sidebar-home-link { display: block !important; color: inherit !important; text-decoration: none !important; cursor: pointer !important; }
-.sidebar-home-link:hover .sidebar-brand { border-color: rgba(174, 255, 205, .72) !important; transform: translateY(-2px); }
-@media (max-width: 700px) {
-    .block-container { padding: 16px 12px 34px !important; }
-    .dashboard-heading img { width: 54px !important; height: 54px !important; }
-    .dashboard-heading-title { font-size: 25px !important; }
-    .chart-panel, .notes-panel { min-height: 0 !important; margin-top: 14px !important; }
-    div:has(> .mobile-nav-marker) + div[data-testid="stHorizontalBlock"] {
-        display: flex !important;
-        position: fixed !important;
-        z-index: 1000 !important;
-        left: 10px !important;
-        right: 10px !important;
-        bottom: 10px !important;
-        gap: 6px !important;
-        padding: 7px !important;
-        border: 1px solid rgba(174, 255, 205, .24) !important;
-        border-radius: 18px !important;
-        background: rgba(3, 24, 16, .86) !important;
-        box-shadow: 0 16px 38px rgba(0, 0, 0, .42), inset 0 1px 0 rgba(255, 255, 255, .10) !important;
-        backdrop-filter: blur(20px) saturate(140%) !important;
+@media (hover: none), (pointer: coarse) {
+    button:active,
+    [role="button"]:active,
+    section[data-testid="stSidebar"] [data-testid="stExpander"] summary:active {
+        background: linear-gradient(135deg, rgba(54, 192, 121, .34), rgba(7, 80, 46, .48)) !important;
+        border-color: rgba(221, 255, 232, .78) !important;
     }
-    div:has(> .mobile-nav-marker) + div[data-testid="stHorizontalBlock"] > div {
-        min-width: 0 !important;
-        padding: 0 2px !important;
+}
+
+    /* Dashboard-only type treatment. Sizes stay controlled by the existing layout. */
+    .block-container:has(.dashboard-heading),
+    .block-container:has(.dashboard-heading) button,
+    .block-container:has(.dashboard-heading) input,
+    .block-container:has(.dashboard-heading) textarea,
+    .block-container:has(.dashboard-heading) [class*="dash"],
+    .block-container:has(.dashboard-heading) [class*="ops"],
+    .block-container:has(.dashboard-heading) [class*="integrated"] {
+        font-family: 'Akira Expanded', 'Orbitron', 'Rajdhani', sans-serif !important;
+        font-weight: 700 !important;
+        letter-spacing: .035em !important;
     }
-    div:has(> .mobile-nav-marker) + div[data-testid="stHorizontalBlock"] button {
-        min-height: 42px !important;
-        padding: 7px 4px !important;
-        border-radius: 12px !important;
-        font-size: 10px !important;
-        box-shadow: none !important;
+    .block-container:has(.dashboard-heading) .dashboard-heading-title,
+    .block-container:has(.dashboard-heading) .section-title,
+    .block-container:has(.dashboard-heading) .schedule-title,
+    .block-container:has(.dashboard-heading) [data-testid="stMetricValue"] {
+        font-family: 'Akira Expanded', 'Orbitron', 'Rajdhani', sans-serif !important;
+        font-weight: 800 !important;
     }
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown("""
+<style>
+/* Final typography contract: preserve existing sizes and layout dimensions. */
+html, body, button, input, textarea, select, label, [class*="css"] {
+    font-family: 'Akira Expanded', 'Orbitron', 'Rajdhani', sans-serif !important;
+    font-weight: 700 !important;
+}
+button, [role="button"], [data-testid="stExpander"] summary,
+section[data-testid="stSidebar"] .stButton > button p {
+    font-family: 'Akira Expanded', 'Orbitron', 'Rajdhani', sans-serif !important;
+    font-weight: 800 !important;
+}
+.dashboard-heading-title, .section-title, .schedule-title,
+.brand-title, .brand-sub, .budget-title, .sidebar-live,
+.integrated-item, .integrated-total, .tx-name, .tx-type, .tx-date,
+[data-testid="stMetricValue"], [data-testid="stMetricLabel"] {
+    font-family: 'Akira Expanded', 'Orbitron', 'Rajdhani', sans-serif !important;
+    font-weight: 700 !important;
+}
+.dashboard-action-rail {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin: 22px 0 8px;
+    padding: 12px 16px;
+    border-left: 3px solid #9fffc7;
+    border-top: 1px solid rgba(168, 255, 208, .25);
+    border-bottom: 1px solid rgba(168, 255, 208, .16);
+    background: linear-gradient(90deg, rgba(7, 79, 43, .28), rgba(2, 31, 17, .08));
+    clip-path: polygon(0 0, 99% 0, 100% 35%, 99% 100%, 0 100%);
+}
+.dashboard-action-copy span {
+    display: block;
+    color: #c2ffdb;
+    font-family: 'Akira Expanded', 'Orbitron', sans-serif;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: .13em;
+}
+.dashboard-action-copy small {
+    display: block;
+    margin-top: 4px;
+    color: #9bcbb0;
+    font-family: 'Akira Expanded', 'Orbitron', sans-serif;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: .04em;
 }
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown("""
 <style>
-/* Premium sidebar system: one hierarchy, one spacing scale, one glass language. */
-section[data-testid="stSidebar"] {
-    width: clamp(290px, 24vw, 350px) !important;
-    min-width: clamp(290px, 24vw, 350px) !important;
-    background: linear-gradient(180deg, rgba(4, 18, 12, .98), rgba(7, 31, 20, .96)) !important;
-    border-right: 1px solid rgba(174, 255, 205, .20) !important;
-    box-shadow: 18px 0 55px rgba(0, 0, 0, .34) !important;
+/* Preserve the original project background; let the emerald glass reveal it. */
+.stApp,
+[data-testid="stAppViewContainer"],
+[data-testid="stAppViewContainer"] > .main,
+[data-testid="stAppViewContainer"] .main .block-container {
+    background-color: transparent !important;
 }
+.stApp {
+    background-image:
+        linear-gradient(115deg, rgba(2, 12, 8, .30), rgba(3, 27, 17, .42)),
+        url("https://images.unsplash.com/photo-1600585154340-be6161a56a0c") !important;
+    background-size: cover !important;
+    background-position: center !important;
+    background-attachment: fixed !important;
+}
+.block-container,
+.dash-section,
+[data-testid="stMetric"],
+[data-testid="stExpander"],
+.cal-card,
+.ops-panel,
+.newdash-panel,
+.integrated-item,
+.integrated-total,
+.sidebar-brand,
+.sidebar-budget-card {
+    background: linear-gradient(135deg, rgba(9, 102, 57, .16), rgba(1, 34, 19, .22)) !important;
+    backdrop-filter: blur(18px) saturate(135%) !important;
+    -webkit-backdrop-filter: blur(18px) saturate(135%) !important;
+}
+section[data-testid="stSidebar"],
 section[data-testid="stSidebar"] > div {
-    width: 100% !important;
-    padding: 18px 15px 28px !important;
-}
-section[data-testid="stSidebar"] .sidebar-brand {
-    min-height: 112px !important;
-    padding: 20px 18px !important;
-    border-radius: 24px !important;
-    background: linear-gradient(145deg, rgba(15, 73, 46, .86), rgba(3, 27, 18, .86)) !important;
-    border: 1px solid rgba(185, 255, 211, .34) !important;
-    box-shadow: 0 22px 42px rgba(0, 0, 0, .34), inset 0 1px 0 rgba(255, 255, 255, .13), 0 0 28px rgba(91, 242, 160, .08) !important;
-}
-section[data-testid="stSidebar"] .sidebar-brand .brand-row {
-    gap: 16px !important;
-}
-section[data-testid="stSidebar"] .sidebar-brand .brand-logo {
-    flex-basis: 64px !important;
-    width: 64px !important;
-    height: 64px !important;
-    padding: 9px !important;
-    border-radius: 19px !important;
-    background: rgba(2, 25, 16, .62) !important;
-    border-color: rgba(185, 255, 211, .30) !important;
-}
-section[data-testid="stSidebar"] .sidebar-brand .brand-title {
-    font-family: 'Outfit', 'Manrope', sans-serif !important;
-    font-size: 17px !important;
-    line-height: 1.08 !important;
-    letter-spacing: .07em !important;
-}
-section[data-testid="stSidebar"] .sidebar-brand .brand-sub {
-    margin-top: 9px !important;
-    font-size: 8px !important;
-    letter-spacing: .18em !important;
-}
-section[data-testid="stSidebar"] .sidebar-live,
-section[data-testid="stSidebar"] .sidebar-offline {
-    margin: 10px 0 !important;
-    min-height: 34px !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    line-height: 1.35 !important;
-    border-radius: 13px !important;
-}
-section[data-testid="stSidebar"] .sidebar-budget-card {
-    margin-top: 14px !important;
-    padding: 16px 15px 10px !important;
-    border-radius: 18px 18px 0 0 !important;
-    background: linear-gradient(145deg, rgba(12, 58, 37, .72), rgba(3, 25, 16, .72)) !important;
-    border-color: rgba(174, 255, 205, .18) !important;
-}
-section[data-testid="stSidebar"] .budget-title {
-    font-family: 'Outfit', 'Manrope', sans-serif !important;
-    font-size: 12px !important;
-    letter-spacing: .14em !important;
-}
-section[data-testid="stSidebar"] [data-testid="stExpander"] {
-    margin: 9px 0 !important;
-    border: 0 !important;
-}
-section[data-testid="stSidebar"] [data-testid="stExpander"] summary {
-    min-height: 42px !important;
-    padding: 11px 13px !important;
-    border-radius: 14px !important;
-    font-family: 'Manrope', sans-serif !important;
-    font-size: 10px !important;
-    letter-spacing: .10em !important;
-    background: rgba(12, 55, 36, .58) !important;
-    border: 1px solid rgba(174, 255, 205, .18) !important;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08) !important;
-}
-section[data-testid="stSidebar"] [data-testid="stExpander"] .streamlit-expanderContent {
-    padding: 7px 2px 2px !important;
-}
-section[data-testid="stSidebar"] .stButton > button {
-    width: 100% !important;
-    min-height: 46px !important;
-    margin: 5px 0 !important;
-    padding: 11px 14px !important;
-    border-radius: 14px !important;
-    font-family: 'Manrope', sans-serif !important;
-    font-size: 11px !important;
-    font-weight: 800 !important;
-    letter-spacing: .015em !important;
-    text-align: left !important;
-    background: linear-gradient(145deg, rgba(15, 70, 44, .76), rgba(4, 31, 20, .82)) !important;
-    border: 1px solid rgba(174, 255, 205, .16) !important;
-    box-shadow: 0 8px 18px rgba(0, 0, 0, .18), inset 0 1px 0 rgba(255, 255, 255, .07) !important;
-}
-section[data-testid="stSidebar"] .stButton > button:hover {
-    transform: translateX(4px) !important;
-    background: linear-gradient(145deg, rgba(23, 104, 64, .90), rgba(5, 40, 25, .90)) !important;
-    border-color: rgba(174, 255, 205, .48) !important;
-    box-shadow: 0 14px 26px rgba(0, 0, 0, .26), 0 0 20px rgba(114, 247, 176, .10) !important;
-}
-@media (max-width: 700px) {
-    section[data-testid="stSidebar"] {
-        width: min(88vw, 340px) !important;
-        min-width: min(88vw, 340px) !important;
-    }
-    section[data-testid="stSidebar"] > div { padding: 14px 12px 24px !important; }
-    section[data-testid="stSidebar"] .sidebar-brand { padding: 17px 15px !important; }
-    section[data-testid="stSidebar"] .sidebar-brand .brand-logo { width: 54px !important; height: 54px !important; flex-basis: 54px !important; }
+    background: linear-gradient(160deg, rgba(1, 34, 19, .72), rgba(0, 15, 9, .78)) !important;
 }
 </style>
 """, unsafe_allow_html=True)
 
-if st.query_params.get("start") == "1":
-    st.session_state.welcome_seen = False
-    st.session_state.view = "home"
-    st.session_state.dashboard_section = "overview"
-    st.query_params.clear()
-    st.rerun()
-
 with st.sidebar:
     st.markdown(f"""
-        <a class="sidebar-home-link" href="?start=1" aria-label="Return to Ailyn House start screen">
-            <div class="sidebar-brand">
+    <div class="sidebar-brand">
       <div class="brand-row">
         <img class="brand-logo" src="{AILYN_LOGO_DATA}" alt="Ailyn Construction Logo">
         <div class="brand-copy">
@@ -2475,40 +2138,35 @@ with st.sidebar:
           <div class="brand-sub">Official Project Control</div>
         </div>
       </div>
-            </div>
-        </a>
+    </div>
     """, unsafe_allow_html=True)
-
     st.markdown(
         f"<div class='sidebar-live'><span>●</span> &nbsp; LIVE SYSTEM &nbsp; • &nbsp; "
-        f"{manila_now().strftime('%I:%M %p  |  %b %d')} · {TIMEZONE_NAME}</div>",
+        f"{manila_now().strftime('%I:%M %p  |  %b %d')}</div>",
         unsafe_allow_html=True
     )
-    if st.session_state.offline_mode:
-        st.markdown("<div class='sidebar-offline'>● LOCAL / OFFLINE DATA MODE</div>", unsafe_allow_html=True)
+
+    if st.button("📊 DASHBOARD", use_container_width=True, key="side_dashboard"):
+        set_view("home")
 
     st.markdown("<div class='sidebar-budget-card'><div class='budget-title'>BUDGET CONTROL</div></div>",
                 unsafe_allow_html=True)
     if st.button("💰 APPLY BUDGET", use_container_width=True, key="side_budget"):
         budget_dialog()
 
-    if st.button("📊 DASHBOARD", use_container_width=True, key="side_dashboard"):
-        st.session_state.welcome_seen = True
-        st.session_state.view = "home"
-        st.session_state.dashboard_section = "overview"
-        st.rerun()
-
-    with st.expander("PROJECT CONTROL", expanded=False):
+    with st.expander("🏗️ PROJECT CONTROL", expanded=False):
         if st.button("📝 NEW WORK ENTRY", use_container_width=True, key="side_new_work"):
             set_view("planner_input")
         if st.button("📅 SCHEDULE & PROGRESS", use_container_width=True, key="side_schedule"):
             set_view("planner_output")
-        if st.button("🧩 WORD PUZZLE", use_container_width=True, key="side_word_puzzle"):
-            set_view("word_puzzle")
-        if st.button("🐍 OWNER CHASE", use_container_width=True, key="side_snake_game"):
-            set_view("snake_game")
 
-    with st.expander("FINANCIAL OPERATIONS", expanded=False):
+    with st.expander("🏠 PROJECT DETAILS", expanded=False):
+        project = st.session_state.project
+        st.caption(f"Status: {project.get('status', 'Active')}")
+        if st.button("⚙️ EDIT PROJECT DETAILS", use_container_width=True, key="side_project_details"):
+            project_settings_dialog()
+
+    with st.expander("💰 FINANCIAL OPERATIONS", expanded=False):
         if st.button("🧱 MATERIAL ENTRY", use_container_width=True, key="side_material"):
             set_view("material")
         if st.button("🧾 EXPENSE ENTRY", use_container_width=True, key="side_expense"):
@@ -2522,7 +2180,7 @@ with st.sidebar:
         if st.button("🔒 MONTHLY CLOSING", use_container_width=True, key="side_monthly_close"):
             set_view("monthly_close")
 
-    with st.expander("PAYROLL OPERATIONS", expanded=False):
+    with st.expander("👷 PAYROLL OPERATIONS", expanded=False):
         if st.button("👷 LABOR ACCOUNT", use_container_width=True, key="side_labor"):
             set_view("add_labor")
         if st.button("💳 PAYROLL EXPENSE", use_container_width=True, key="side_payroll_expense"):
@@ -2536,19 +2194,16 @@ with st.sidebar:
         if st.button("🗃️ RECEIPTS ARCHIVE", use_container_width=True, key="side_archive"):
             set_view("receipt_archive")
 
-    with st.expander("ADMINISTRATION", expanded=False):
+    with st.expander("⚙️ ADMINISTRATION", expanded=False):
         if st.button("🔐 ADMIN CONSOLE", use_container_width=True, key="side_admin"):
             set_view("update")
 
+    st.markdown("<div class='sidebar-divider'></div>", unsafe_allow_html=True)
     if st.button("🔄 RESET SYSTEM", use_container_width=True, key="side_restart"):
         clear_all()
-        set_view("home")
-
-    with st.expander("PROJECT DETAILS", expanded=False):
-        project = st.session_state.project
-        st.caption(f"Status: {project.get('status', 'Active')}")
-        if st.button("⚙️ EDIT PROJECT DETAILS", use_container_width=True, key="side_project_details"):
-            project_settings_dialog()
+        st.session_state.welcome_seen = True
+        st.session_state.view = "home"
+        st.rerun()
 
 view = st.session_state.view
 
@@ -2559,6 +2214,11 @@ if view == "home":
     material = float(total_materials() or 0)
     expenses = float(total_expenses() or 0)
     excess = float(total_excess() or 0)
+    payroll_labor = sum(float(record.get("net", 0) or 0) for record in st.session_state.labor_records)
+    payroll_expenses = sum(float(record.get("price", 0) or 0) for record in st.session_state.payroll_expenses)
+    payroll_total = payroll_labor + payroll_expenses
+    total_operating_spend = used + payroll_total
+    worker_count = len(st.session_state.labor_records)
     chart_total = max(material + expenses + excess, 1.0)
     p1 = material / chart_total * 360
     p2 = p1 + expenses / chart_total * 360
@@ -2566,830 +2226,181 @@ if view == "home":
     today_key = manila_now().strftime("%Y-%m-%d")
     today_tasks = [t for t in st.session_state.planner_tasks if t.get("date_obj") == today_key]
     upcoming_tasks = [t for t in st.session_state.planner_tasks if t.get("date_obj", "") >= today_key]
-    section = st.session_state.get("dashboard_section", "overview")
 
     st.markdown(f"""
     <div class="dashboard-heading">
-      <img src="{AILYN_LOGO_DATA}" alt="Ailyn House Logo">
-      <div class="dashboard-heading-title">AILYN HOUSE</div>
+    <img src="{AILYN_LOGO_DATA}" alt="Ailyn Construction Logo">
+      <div>
+        <div class="dashboard-heading-title">AILYN HOUSE PROJECT</div>
+        <div class="dashboard-heading-sub">PROJECT MANAGEMENT SYSTEM</div>
+      </div>
     </div>
+    <div class="dashboard-welcome">🛡️ &nbsp; Welcome back, <b>{st.session_state.project.get("name", "Ailyn House Project")}</b> &nbsp;|&nbsp; Manage your construction project efficiently.</div>
     """, unsafe_allow_html=True)
+    project = st.session_state.project
+    if project.get("client") or project.get("address") or project.get("target_date"):
+        st.caption(
+            f"Client: {project.get('client') or 'Not set'}  |  Site: {project.get('address') or 'Not set'}  |  "
+            f"Target: {project.get('target_date') or 'Not set'}  |  Status: {project.get('status', 'Active')}"
+        )
+    overdue_tasks = [
+        task for task in st.session_state.planner_tasks
+        if task.get("date_obj", "") < manila_now().strftime("%Y-%m-%d")
+        and task.get("status") != "Completed"
+    ]
+    if balance < 0:
+        st.error(f"Budget warning: project is over budget by PHP {abs(balance):,.2f}.")
+    if overdue_tasks:
+        st.warning(f"{len(overdue_tasks)} scheduled task(s) are overdue.")
 
-    dashboard_search = st.text_input(
-        "Search project records",
-        placeholder="Search materials, expenses, workers, payroll, or dates...",
-        key="dashboard_search",
-    ).strip().lower()
-    if dashboard_search:
-        search_state = {
-            "records": st.session_state.records,
-            "labor_records": st.session_state.labor_records,
-            "payroll_expenses": st.session_state.payroll_expenses,
-        }
-        search_results = [
-            record for record in searchable_records(search_state)
-            if dashboard_search in str(record).lower()
-        ]
-        st.markdown(f"<div class='search-result-count'>{len(search_results)} matching record(s)</div>", unsafe_allow_html=True)
-        if search_results:
-            st.dataframe(
-                [{
-                    "Category": record.get("category", ""),
-                    "Date": record.get("date", record.get("month", "")),
-                    "Description": record.get("name", record.get("item", record.get("description", ""))),
-                    "Amount": float(record.get("amount", record.get("price", record.get("net", 0))) or 0),
-                } for record in search_results[:100]],
-                use_container_width=True,
-                hide_index=True,
-            )
-        else:
-            st.info("No project records match that search.")
+    m1, m2, m3, m4 = st.columns(4)
+    with m1:
+        st.metric("TOTAL BUDGET", f"₱{budget:,.2f}")
+    with m2:
+        st.metric("TOTAL EXPENSES", f"₱{used:,.2f}")
+    with m3:
+        st.metric("REMAINING BALANCE", f"₱{balance:,.2f}")
+    with m4:
+        st.metric(
+            f"PROJECT SPENT THIS MONTH ({manila_now().strftime('%b %Y').upper()})",
+            f"₱{monthly_construction_spend():,.2f}",
+        )
 
-    tracker = st.session_state.get("dashboard_tracker", {})
-    tracker["status"] = "Operational"
-    tracker["updated_at"] = manila_now().isoformat()
-    tracker["summary"] = {
-        "budget": float(st.session_state.budget or 0),
-        "spent": float(get_total() or 0),
-        "balance": float(get_balance() or 0),
-        "tasks": len(st.session_state.planner_tasks),
-        "workers": len(st.session_state.labor_records),
-    }
-    st.session_state.dashboard_tracker = tracker
-
-    st.markdown("""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500;600;700;800;900&family=Rajdhani:wght@400;500;600;700&display=swap');
-
-    .dash-shell {
-        font-family: 'Rajdhani', sans-serif;
-        color: #ecfff5;
-        border-radius: 28px;
-        padding: 8px 8px 24px;
-        background: linear-gradient(180deg, rgba(7, 18, 13, 0.20), rgba(10, 26, 18, 0.10));
-    }
-    .ops-topbar {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        padding: 14px 18px;
-        border-radius: 18px;
-        background: rgba(7, 20, 14, 0.60);
-        border: 1px solid rgba(0, 255, 153, 0.26);
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 18px 38px rgba(0, 255, 153, 0.08);
-        margin-bottom: 18px;
-        backdrop-filter: blur(16px);
-    }
-    .ops-menu {
-        width: 42px;
-        height: 42px;
-        display: grid;
-        place-items: center;
-        border-radius: 12px;
-        background: rgba(0, 255, 153, 0.08);
-        border: 1px solid rgba(0, 255, 153, 0.22);
-        color: #8fffc8;
-        font-size: 18px;
-    }
-    .ops-search {
-        flex: 1;
-        min-height: 42px;
-        display: flex;
-        align-items: center;
-        padding: 0 16px;
-        border-radius: 14px;
-        background: rgba(11, 18, 15, 0.78);
-        border: 1px solid rgba(0, 255, 153, 0.12);
-        color: rgba(220,255,237,0.72);
-        letter-spacing: 0.05em;
-        text-transform: uppercase;
-        font-size: 12px;
-        font-weight: 700;
-    }
-    .ops-heading {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 18px;
-        padding: 18px 22px 16px;
-        border-radius: 24px;
-        background: linear-gradient(135deg, rgba(8, 25, 17, 0.88), rgba(5, 35, 26, 0.70));
-        border: 1px solid rgba(0, 255, 153, 0.18);
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 22px 42px rgba(0, 0, 0, 0.18);
-        margin-bottom: 18px;
-    }
-    .ops-greeting {
-        color: #f4fff8;
-        font-family: 'Orbitron', sans-serif;
-        font-size: clamp(1.35rem, 2vw, 2.2rem);
-        line-height: 1.2;
-        font-weight: 800;
-        letter-spacing: 0.03em;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-    }
-    .ops-greeting strong {
-        color: #7dffc0;
-        font-size: clamp(1.3rem, 2vw, 2.5rem);
-    }
-    .ops-greeting span {
-        font-family: 'Rajdhani', sans-serif;
-        font-size: 0.82rem;
-        letter-spacing: 0.08em;
-        color: rgba(210,245,225,0.72);
-        text-transform: uppercase;
-    }
-    .ops-quote {
-        font-family: 'Orbitron', sans-serif;
-        font-size: 1rem;
-        line-height: 1.4;
-        text-align: right;
-        color: #9af8ce;
-        padding: 14px 18px;
-        border-left: 2px solid rgba(0, 255, 153, 0.45);
-        background: linear-gradient(135deg, rgba(0,255,153,0.08), rgba(0,0,0,0.0));
-        border-radius: 14px;
-    }
-    .ops-kpi-grid {
-        display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 16px;
-        margin-bottom: 18px;
-    }
-    .ops-kpi {
-        position: relative;
-        overflow: hidden;
-        padding: 18px 18px 16px;
-        border-radius: 22px;
-        background: linear-gradient(180deg, rgba(11, 19, 15, 0.90), rgba(5, 13, 11, 0.80));
-        border: 1px solid rgba(0, 255, 153, 0.18);
-        box-shadow: 0 12px 28px rgba(0, 255, 153, 0.08), inset 0 1px 0 rgba(255,255,255,0.06);
-        transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
-    }
-    .ops-kpi:hover {
-        transform: translateY(-4px);
-        border-color: rgba(0, 255, 153, 0.28);
-        box-shadow: 0 16px 34px rgba(0, 255, 153, 0.12);
-    }
-    .ops-kpi::before {
-        content: "";
-        position: absolute;
-        inset: 0 auto auto 0;
-        width: 100%;
-        height: 2px;
-        background: linear-gradient(90deg, transparent, rgba(0,255,153,0.9), transparent);
-    }
-    .ops-kpi-label {
-        font-family: 'Rajdhani', sans-serif;
-        font-size: 0.8rem;
-        letter-spacing: 0.16em;
-        text-transform: uppercase;
-        color: rgba(219,245,230,0.72);
-        margin-bottom: 10px;
-    }
-    .ops-kpi-value {
-        font-family: 'Orbitron', sans-serif;
-        font-size: clamp(1.8rem, 2.4vw, 2.7rem);
-        font-weight: 800;
-        color: #f5fff9;
-        line-height: 1.1;
-        margin-bottom: 8px;
-    }
-    .ops-kpi-trend {
-        font-size: 0.78rem;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        color: #82f7c0;
-    }
-    .ops-grid {
-        display: grid;
-        grid-template-columns: 1.75fr 0.95fr;
-        gap: 18px;
-        margin-bottom: 18px;
-    }
-    .ops-panel {
-        background: linear-gradient(180deg, rgba(12, 22, 18, 0.88), rgba(5, 11, 9, 0.80));
-        border: 1px solid rgba(0, 255, 153, 0.18);
-        border-radius: 24px;
-        padding: 18px 18px 10px;
-        box-shadow: 0 16px 32px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255,255,255,0.05);
-        backdrop-filter: blur(16px);
-    }
-    .ops-panel-head {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 12px;
-        margin-bottom: 16px;
-        color: #ebfff4;
-        font-family: 'Rajdhani', sans-serif;
-        font-size: 0.95rem;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        font-weight: 700;
-    }
-    .ops-table {
-        width: 100%;
-        border-collapse: collapse;
-        color: #effff5;
-    }
-    .ops-table th {
-        text-align: left;
-        font-size: 0.72rem;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-        color: rgba(206,245,223,0.7);
-        padding: 10px 8px 14px;
-        border-bottom: 1px solid rgba(0,255,153,0.12);
-    }
-    .ops-table td {
-        padding: 12px 8px;
-        border-bottom: 1px solid rgba(0,255,153,0.08);
-        font-size: 0.95rem;
-    }
-    .ops-table tbody tr:hover {
-        background: rgba(0,255,153,0.04);
-    }
-    .ops-status {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        padding: 6px 10px;
-        border-radius: 999px;
-        background: rgba(0,255,153,0.12);
-        color: #8efcc2;
-        border: 1px solid rgba(0,255,153,0.26);
-        font-size: 0.74rem;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        font-weight: 700;
-    }
-    .ops-status-muted {
-        background: rgba(232,236,237,0.06);
-        border-color: rgba(255,255,255,0.12);
-        color: rgba(228,236,239,0.8);
-    }
-    .ops-progress {
-        position: relative;
-        width: 100%;
-        height: 9px;
-        border-radius: 999px;
-        background: rgba(255,255,255,0.06);
-        overflow: hidden;
-    }
-    .ops-progress i {
-        position: absolute;
-        inset: 0 auto 0 0;
-        display: block;
-        width: 50%;
-        border-radius: inherit;
-        background: linear-gradient(90deg, #6efac0, #00ff99);
-        box-shadow: 0 0 14px rgba(0,255,153,0.45);
-    }
-    .ops-status-list {
-        display: grid;
-        gap: 12px;
-    }
-    .ops-status-row {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        padding: 12px 14px;
-        border-radius: 14px;
-        background: rgba(255,255,255,0.02);
-        border: 1px solid rgba(0,255,153,0.08);
-    }
-    .ops-dot {
-        display: inline-block;
-        width: 10px;
-        height: 10px;
-        border-radius: 50%;
-        background: #00FF99;
-        box-shadow: 0 0 14px rgba(0,255,153,0.5);
-        margin-right: 8px;
-    }
-    .ops-dot.warn { background: #ffd76a; box-shadow: 0 0 14px rgba(255,215,106,0.5); }
-    .ops-dot.muted { background: #95a9b7; box-shadow: 0 0 14px rgba(149,169,183,.5); }
-    .ops-activity {
-        display: grid;
-        gap: 10px;
-    }
-    .ops-activity-row {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        padding: 10px 12px;
-        border-radius: 14px;
-        background: rgba(255,255,255,0.025);
-        border: 1px solid rgba(0,255,153,0.08);
-    }
-    .ops-activity-icon {
-        width: 36px;
-        height: 36px;
-        display: grid;
-        place-items: center;
-        border-radius: 50%;
-        background: rgba(0,255,153,0.08);
-        border: 1px solid rgba(0,255,153,0.2);
-        color: #8efcc2;
-        font-weight: 800;
-    }
-    .ops-activity-row div {
-        flex: 1;
-        font-size: 0.92rem;
-        color: #ebfff4;
-    }
-    .ops-activity-row small {
-        display: block;
-        margin-top: 4px;
-        color: rgba(216,240,224,0.68);
-        letter-spacing: 0.04em;
-    }
-    .ops-activity-row span {
-        font-weight: 700;
-        color: #8efcc2;
-    }
-    .ops-quick-grid {
-        display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 18px;
-        margin-top: 18px;
-    }
-    .ops-quick {
-        padding: 18px 16px;
-        min-height: 116px;
-        border-radius: 22px;
-        background: linear-gradient(180deg, rgba(10,19,15,0.90), rgba(4,10,8,0.80));
-        border: 1px solid rgba(0,255,153,0.18);
-        box-shadow: 0 14px 28px rgba(0,255,153,0.08), inset 0 1px 0 rgba(255,255,255,0.06);
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        gap: 8px;
-        transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
-    }
-    .ops-quick:hover {
-        transform: translateY(-5px);
-        border-color: rgba(0,255,153,0.32);
-        box-shadow: 0 16px 36px rgba(0,255,153,0.12);
-    }
-    .ops-quick b {
-        color: #ecfff5;
-        font-family: 'Orbitron', sans-serif;
-        font-weight: 700;
-        letter-spacing: 0.06em;
-        font-size: 0.9rem;
-    }
-    .ops-quick span {
-        color: rgba(213,240,223,0.72);
-        font-size: 0.78rem;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-    }
-    @media (max-width: 980px) {
-        .ops-kpi-grid, .ops-quick-grid, .ops-grid { grid-template-columns: 1fr 1fr; }
-        .ops-heading { flex-direction: column; align-items: flex-start; }
-        .ops-quote { text-align: left; border-left: none; border-top: 2px solid rgba(0,255,153,0.45); }
-    }
-    @media (max-width: 720px) {
-        .ops-kpi-grid, .ops-quick-grid, .ops-grid { grid-template-columns: 1fr; }
-        .ops-topbar { flex-wrap: wrap; }
-        .ops-search { width: 100%; }
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-    tabs = st.columns(4)
-    dashboard_tabs = {
-        "overview": "Overview",
-        "financials": "Financials",
-        "payroll": "Payroll",
-        "planner": "Planner",
-    }
-    for index, (key, label) in enumerate(dashboard_tabs.items()):
-        with tabs[index]:
-            button_type = "primary" if section == key else "secondary"
-            if st.button(label, key=f"dashboard_tab_{key}", use_container_width=True, type=button_type):
-                st.session_state.dashboard_section = key
-                st.rerun()
-
-    if section == "overview":
-                project_name = escape_report_text(st.session_state.project.get("name", "Ailyn House Project"))
-                project_status = st.session_state.project.get("status", "Active")
-                task_rows = sorted(st.session_state.planner_tasks, key=lambda item: item.get("date_obj", ""), reverse=True)[:5]
-                material_count = len([record for record in st.session_state.records if record.get("type") == "material"])
-                activity_records = list(reversed(st.session_state.records))[:4]
-                total_tasks = len(st.session_state.planner_tasks)
-                completed_tasks = len([task for task in st.session_state.planner_tasks if task.get("status") == "Completed"])
-                progress = int(completed_tasks / total_tasks * 100) if total_tasks else 0
-                status_counts = {"In Progress": 0, "On Hold": 0, "Not Started": 0}
-                for task in st.session_state.planner_tasks:
-                        status_counts[task.get("status", "Not Started")] = status_counts.get(task.get("status", "Not Started"), 0) + 1
-                task_rows_html = "".join(
-                    f"<tr><td>{index}</td><td>{escape_report_text(task.get('name', 'Work task'))}</td>"
-                    f"<td>{escape_report_text(task.get('date_obj', ''))}</td>"
-                    f"<td><span class='ops-status {'ops-status-muted' if task.get('status') == 'Not Started' else ''}'>"
-                    f"{escape_report_text(task.get('status', 'Not Started'))}</span></td>"
-                    f"<td><div class='ops-progress'><i style='width:{100 if task.get('status') == 'Completed' else 50 if task.get('status') == 'In Progress' else 0}%'></i></div></td></tr>"
-                    for index, task in enumerate(task_rows, 2)
-                )
-                activity_html = "".join(
-                    f"<div class='ops-activity-row'><div class='ops-activity-icon'>{'▣' if record.get('type') == 'expense' else '▱'}</div>"
-                    f"<div>{escape_report_text(record.get('name', 'Transaction'))}<small>{escape_report_text(record.get('type', 'Record').title())} · {escape_report_text(record.get('date', ''))}</small></div>"
-                    f"<span>₱{float(record.get('amount', 0) or 0):,.0f}</span></div>"
-                    for record in activity_records
-                ) or '<div class="ops-activity-row">No recent activity yet.</div>'
-
-                st.markdown("""
-                <style>
-                .newdash-shell{position:relative;display:flex;flex-direction:column;gap:18px;padding:12px 6px 10px;}
-                .newdash-header{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:10px 12px 12px;}
-                .newdash-brand{display:flex;align-items:center;gap:12px;justify-content:center;flex:1;min-width:0;text-transform:uppercase;letter-spacing:.08em;color:#edfdf3;font-family:'Outfit',sans-serif;font-weight:900;font-size:clamp(1.4rem,2vw,2.25rem);}
-                .newdash-brand img{width:42px;height:42px;border-radius:12px;box-shadow:0 10px 24px rgba(61,255,165,.18),0 0 22px rgba(83,255,176,.12);}
-                .newdash-search{flex:1;max-width:540px;display:flex;align-items:center;gap:10px;padding:12px 16px;border-radius:14px;border:1px solid rgba(120,255,193,.18);background:rgba(8,15,13,.62);backdrop-filter:blur(12px);color:rgba(223,248,234,.7);font-size:12px;letter-spacing:.08em;text-transform:uppercase;box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 8px 20px rgba(0,0,0,.12);}
-                .newdash-hero{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;padding:22px 18px 18px;border-radius:24px;border:1px solid rgba(130,255,195,.18);background:linear-gradient(135deg,rgba(7,30,20,.80),rgba(8,42,30,.60));box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 18px 40px rgba(0,0,0,.18);}
-                .newdash-copy{display:flex;flex-direction:column;gap:8px;}
-                .newdash-eyebrow{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:#9ae7bf;font-weight:800;}
-                .newdash-copy h2{margin:0;color:#f4fff8;font-family:'Outfit',sans-serif;font-size:clamp(2.1rem,3vw,4rem);line-height:.95;letter-spacing:.02em;}
-                .newdash-quote{padding:10px 14px;border-left:2px solid rgba(110,247,184,.55);background:linear-gradient(90deg,rgba(110,247,184,.08),rgba(0,0,0,0));border-radius:10px;color:#9cfbc5;font-size:13px;font-weight:700;line-height:1.5;max-width:290px;text-align:right;}
-                .newdash-kpi-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;}
-                .newdash-kpi{position:relative;overflow:hidden;padding:18px 18px 16px;border-radius:20px;border:1px solid rgba(130,255,195,.18);background:linear-gradient(180deg,rgba(9,21,16,.88),rgba(8,16,12,.9));box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 12px 26px rgba(0,0,0,.12);}
-                .newdash-kpi:before{content:'';position:absolute;inset:0 auto auto 0;height:2px;width:100%;background:linear-gradient(90deg,transparent,rgba(110,247,184,.85),transparent);}
-                .newdash-kpi-label{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:#9ccdb3;font-weight:800;}
-                .newdash-kpi-value{margin-top:8px;font-family:'Outfit',sans-serif;font-size:clamp(1.7rem,2.2vw,2.8rem);font-weight:900;color:#f8fff9;line-height:1;}
-                .newdash-kpi-trend{margin-top:8px;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#7ef7b8;font-weight:800;}
-                .newdash-grid{display:grid;grid-template-columns:1.75fr .95fr;gap:18px;}
-                .newdash-panel{padding:18px 18px 12px;border-radius:22px;border:1px solid rgba(130,255,195,.18);background:linear-gradient(180deg,rgba(8,19,15,.85),rgba(6,13,10,.85));box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 14px 30px rgba(0,0,0,.12);}
-                .newdash-panel-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid rgba(130,255,195,.12);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:#9ed8b5;font-weight:800;}
-                .newdash-table{width:100%;border-collapse:collapse;color:#edfdf3;}
-                .newdash-table th,.newdash-table td{padding:10px 8px;text-align:left;border-bottom:1px solid rgba(130,255,195,.08);}
-                .newdash-table th{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#9bc6a9;font-weight:800;}
-                .newdash-table td{font-size:13px;}
-                .newdash-status{display:inline-flex;align-items:center;padding:6px 9px;border-radius:999px;border:1px solid rgba(110,247,184,.25);background:rgba(110,247,184,.08);color:#96f8cc;font-size:10px;letter-spacing:.08em;text-transform:uppercase;font-weight:800;}
-                .newdash-progress{position:relative;height:8px;border-radius:999px;background:rgba(255,255,255,.06);overflow:hidden;}
-                .newdash-progress i{position:absolute;left:0;top:0;bottom:0;border-radius:inherit;background:linear-gradient(90deg,#7ef7b8,#31d790);box-shadow:0 0 14px rgba(110,247,184,.42);}
-                .newdash-status-list{display:grid;gap:10px;}
-                .newdash-status-row{display:flex;align-items:center;justify-content:space-between;padding:12px 12px;border-radius:14px;background:rgba(255,255,255,.02);border:1px solid rgba(110,247,184,.08);}
-                .newdash-status-row .left{display:flex;align-items:center;gap:10px;color:#edfdf3;font-weight:700;}
-                .newdash-dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:#78f7b8;box-shadow:0 0 12px rgba(120,247,184,.5);} .newdash-dot.warn{background:#ffd76a;box-shadow:0 0 12px rgba(255,215,106,.42);} .newdash-dot.muted{background:#9bafb7;box-shadow:0 0 12px rgba(155,175,183,.35);} 
-                .newdash-activity{display:grid;gap:10px;}
-                .newdash-activity-row{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:14px;background:rgba(255,255,255,.02);border:1px solid rgba(110,247,184,.08);}
-                .newdash-activity-icon{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;background:rgba(110,247,184,.08);border:1px solid rgba(110,247,184,.18);color:#90f9c8;font-weight:900;}
-                .newdash-activity-copy{flex:1;color:#edfdf3;font-weight:700;line-height:1.2;}
-                .newdash-activity-copy small{display:block;margin-top:4px;color:#9cc9b1;font-size:11px;letter-spacing:.04em;}
-                .newdash-amount{font-weight:800;color:#a8f9d4;}
-                .newdash-actions{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;}
-                .newdash-action{padding:14px 12px;border-radius:16px;border:1px solid rgba(130,255,195,.18);background:linear-gradient(180deg,rgba(9,22,17,.9),rgba(7,16,12,.9));box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 12px 24px rgba(0,0,0,.12);font-weight:800;color:#ebfff3;display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;transition:transform .2s ease, box-shadow .2s ease, border-color .2s ease;}
-                .newdash-action:hover{transform:translateY(-2px);border-color:rgba(120,255,188,.38);box-shadow:0 14px 24px rgba(0,0,0,.18),0 0 16px rgba(120,255,188,.10);}
-                @media (max-width:1024px){.newdash-kpi-grid,.newdash-actions{grid-template-columns:repeat(2,minmax(0,1fr));}.newdash-grid{grid-template-columns:1fr;}.newdash-header{flex-direction:column;}.newdash-search{max-width:none;width:100%;}.newdash-hero{flex-direction:column;align-items:flex-start;}.newdash-quote{text-align:left;max-width:none;border-left:none;border-top:2px solid rgba(110,247,184,.55);padding-top:12px;}}
-                @media (max-width:640px){.newdash-kpi-grid,.newdash-actions{grid-template-columns:1fr;}.newdash-brand{font-size:1.2rem;}.newdash-copy h2{font-size:2.1rem;}}
-                </style>
-                """ + f"""
-                <div class="newdash-shell">
-                  <div class="newdash-header">
-                    <div class="newdash-brand"><img src="{AILYN_LOGO_DATA}" alt="Ailyn House Logo">AILYN HOUSE</div>
-                    <div class="newdash-search">⌕ Search projects, employees, reports...</div>
-                  </div>
-                  <div class="newdash-hero">
-                    <div class="newdash-copy">
-                      <div class="newdash-eyebrow">Project control</div>
-                      <h2>Administrator</h2>
-                    </div>
-                    <div class="newdash-quote">“Building today<br>for a better tomorrow.”</div>
-                  </div>
-                  <div class="newdash-kpi-grid">
-                    <div class="newdash-kpi"><div class="newdash-kpi-label">Total Projects</div><div class="newdash-kpi-value">{1 if st.session_state.project.get('name') else 0}</div><div class="newdash-kpi-trend">Active project</div></div>
-                    <div class="newdash-kpi"><div class="newdash-kpi-label">Materials</div><div class="newdash-kpi-value">{material_count}</div><div class="newdash-kpi-trend">Ledger items</div></div>
-                    <div class="newdash-kpi"><div class="newdash-kpi-label">Employees</div><div class="newdash-kpi-value">{len(st.session_state.labor_records)}</div><div class="newdash-kpi-trend">Payroll records</div></div>
-                    <div class="newdash-kpi"><div class="newdash-kpi-label">Project Progress</div><div class="newdash-kpi-value">{progress}%</div><div class="newdash-kpi-trend">Schedule completion</div></div>
-                  </div>
-                  <div class="newdash-grid">
-                    <div class="newdash-panel">
-                      <div class="newdash-panel-head"><span>Project overview</span><span>View all →</span></div>
-                      <table class="newdash-table"><thead><tr><th>#</th><th>Project</th><th>Start Date</th><th>Status</th><th>Progress</th></tr></thead><tbody>
-                        <tr><td>1</td><td>{project_name}</td><td>{manila_now().strftime('%b %d, %Y')}</td><td><span class="newdash-status">{escape_report_text(project_status)}</span></td><td><div class="newdash-progress"><i style="width:{progress}%"></i></div></td></tr>
-                        {task_rows_html}
-                      </tbody></table>
-                    </div>
-                    <div class="newdash-panel">
-                      <div class="newdash-panel-head"><span>Project status</span><span>{total_tasks} tasks</span></div>
-                      <div class="newdash-status-list">
-                        <div class="newdash-status-row"><div class="left"><span class="newdash-dot"></span>In Progress</div><b>{status_counts['In Progress']}</b></div>
-                        <div class="newdash-status-row"><div class="left"><span class="newdash-dot warn"></span>On Hold</div><b>{status_counts['On Hold']}</b></div>
-                        <div class="newdash-status-row"><div class="left"><span class="newdash-dot muted"></span>Not Started</div><b>{status_counts['Not Started']}</b></div>
-                      </div>
-                    </div>
-                  </div>
-                  <div class="newdash-grid">
-                    <div class="newdash-panel">
-                      <div class="newdash-panel-head"><span>Recent activity</span><span>Latest</span></div>
-                      <div class="newdash-activity">{activity_html}</div>
-                    </div>
-                    <div class="newdash-panel">
-                      <div class="newdash-panel-head"><span>Budget status</span><span>{(balance / budget * 100) if budget else 0:.0f}% left</span></div>
-                      <div class="newdash-status-list">
-                        <div class="newdash-status-row"><div class="left"><span class="newdash-dot"></span>Budget</div><b>₱{budget:,.0f}</b></div>
-                        <div class="newdash-status-row"><div class="left"><span class="newdash-dot warn"></span>Spent</div><b>₱{used:,.0f}</b></div>
-                        <div class="newdash-status-row"><div class="left"><span class="newdash-dot muted"></span>Balance</div><b>₱{balance:,.0f}</b></div>
-                      </div>
-                    </div>
-                  </div>
-                  <div class="newdash-actions">
-                    <div class="newdash-action">＋ Add Project</div>
-                    <div class="newdash-action">◇ Add Material</div>
-                    <div class="newdash-action">♙ Process Payroll</div>
-                    <div class="newdash-action">▥ View Reports</div>
-                  </div>
-                </div>
-                """, unsafe_allow_html=True)
-                quick_cols = st.columns(4)
-                for quick_col, label, target in zip(quick_cols, ("ADD PROJECT", "ADD MATERIAL", "PROCESS PAYROLL", "VIEW REPORTS"), ("planner_input", "material", "add_labor", "export")):
-                        with quick_col:
-                                if st.button(label, key=f"ops_quick_{target}", use_container_width=True):
-                                        set_view(target)
-
-    elif section == "financials":
-        st.subheader("Financial Overview")
-        c1, c2, c3, c4 = st.columns(4)
-        with c1:
-            st.metric("Budget", f"₱{budget:,.2f}")
-        with c2:
-            st.metric("Materials", f"₱{material:,.2f}")
-        with c3:
-            st.metric("Expenses", f"₱{expenses:,.2f}")
-        with c4:
-            st.metric("Balance", f"₱{balance:,.2f}")
-        st.dataframe([
-            {"Type": "Materials", "Total": f"₱{material:,.2f}"},
-            {"Type": "Construction Expenses", "Total": f"₱{expenses:,.2f}"},
-            {"Type": "Excess Money", "Total": f"₱{excess:,.2f}"},
-            {"Type": "Remaining Balance", "Total": f"₱{balance:,.2f}"},
-        ], use_container_width=True, hide_index=True)
-        if st.button("Open Financial Ledger", use_container_width=True):
-            set_view("ledger")
-
-    elif section == "payroll":
-        payroll_labor = sum(float(record.get("net", 0)) for record in st.session_state.labor_records)
-        payroll_expenses = sum(float(record.get("price", 0)) for record in st.session_state.payroll_expenses)
-        payroll_total = payroll_labor + payroll_expenses
-        payroll_remaining = float(st.session_state.remaining_money or 0)
-        payroll_output = payroll_total - payroll_remaining
-
-        st.subheader("Payroll Summary")
-        p1, p2, p3, p4 = st.columns(4)
-        with p1:
-            st.metric("Workers", len(st.session_state.labor_records))
-        with p2:
-            st.metric("Net labor", f"PHP {payroll_labor:,.2f}")
-        with p3:
-            st.metric("Payroll expenses", f"PHP {payroll_expenses:,.2f}")
-        with p4:
-            st.metric("Final payout", f"PHP {payroll_output:,.2f}")
-
-        left, right = st.columns(2)
-        with left:
-            role_rows = []
-            for role in FULL_DAY_RATES:
-                role_records = [r for r in st.session_state.labor_records if r.get("role") == role]
-                role_rows.append({
-                    "Role": role,
-                    "Workers": len(role_records),
-                    "Days": sum(float(r.get("days", 0)) for r in role_records),
-                    "Net pay": f"PHP {sum(float(r.get('net', 0)) for r in role_records):,.2f}",
-                })
-            st.dataframe(role_rows, use_container_width=True, hide_index=True)
-        with right:
-            st.write(f"Current remainder: **PHP {payroll_remaining:,.2f}**")
-            if st.button("Add Labor Account", use_container_width=True):
-                set_view("add_labor")
-            if st.button("Payroll Ledger", use_container_width=True):
-                set_view("payroll_ledger")
-            if st.button("Payroll Report", use_container_width=True):
-                set_view("payroll_export")
-
-    elif section == "planner":
-        st.subheader("Project Planner")
-        if not st.session_state.planner_tasks:
-            st.info("No tasks scheduled yet.")
-        else:
-            sorted_tasks = sorted(st.session_state.planner_tasks, key=lambda x: x.get('date_obj', ''))
-            for task in sorted_tasks:
-                with st.expander(
-                        f"{task.get('month')} {task.get('day')}, {task.get('year')} — {task['name']} ({task['status']})"):
-                    st.write(f"Phase: {task.get('phase', 'Unassigned')}")
-                    if task.get("photos"):
-                        cols = st.columns(min(4, len(task['photos'])))
-                        for index, photo in enumerate(task["photos"][:4]):
-                            with cols[index % min(4, len(task['photos']))]:
-                                st.image(photo, use_container_width=True)
-                    else:
-                        st.caption("No photo proof attached.")
-        if st.button("Open Planner", use_container_width=True):
-            set_view("planner_output")
+    st.markdown(f"""
+        <div class="dash-section integrated-control-strip">
+            <div class="section-head"><div class="section-title" style="margin:0">INTEGRATED OPERATIONS</div><span>CONSTRUCTION + PAYROLL</span></div>
+            <div class="integrated-grid">
+                <div class="integrated-item"><span class="integrated-icon">◇</span><div><small>MATERIALS</small><strong>₱{material:,.2f}</strong></div></div>
+                <div class="integrated-item"><span class="integrated-icon">▣</span><div><small>OPERATING EXPENSES</small><strong>₱{expenses:,.2f}</strong></div></div>
+                <div class="integrated-item"><span class="integrated-icon">♙</span><div><small>LABOR PAYROLL</small><strong>₱{payroll_labor:,.2f}</strong></div></div>
+                <div class="integrated-item"><span class="integrated-icon">◎</span><div><small>PAYROLL EXPENSES</small><strong>₱{payroll_expenses:,.2f}</strong></div></div>
+                <div class="integrated-total"><small>TOTAL OPERATING SPEND</small><strong>₱{total_operating_spend:,.2f}</strong><span>{worker_count} worker(s) active in payroll</span></div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
     st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
+    left, right = st.columns([1.05, 1])
+    with left:
+        st.markdown(f"""
+        <div class="dash-section">
+          <div class="section-head"><div class="section-title" style="margin:0">EXPENSES OVERVIEW</div><span style="font-size:11px;color:#7b867f;font-weight:700">THIS PROJECT</span></div>
+          <div class="donut-wrap">
+            <div class="donut" style="--p1:{p1}deg;--p2:{p2}deg;--p3:{p3}deg"><div class="donut-center">₱{used:,.0f}<small>Total Expenses</small></div></div>
+            <div class="legend">
+              <div class="legend-row"><span><i class="dot" style="background:#075c28"></i>Materials</span><b>₱{material:,.2f}</b></div>
+              <div class="legend-row"><span><i class="dot" style="background:#e0aa25"></i>Expenses</span><b>₱{expenses:,.2f}</b></div>
+              <div class="legend-row"><span><i class="dot" style="background:#e85d4a"></i>Excess</span><b>₱{excess:,.2f}</b></div>
+            </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+    with right:
+        tx = list(reversed(st.session_state.records))[:5]
+        tx_html = ""
+        if tx:
+            for r in tx:
+                icon = "🛒" if r.get("type") == "material" else "▣" if r.get("type") == "expense" else "+"
+                tx_html += f'''<div class="tx-row"><div class="tx-left"><div class="tx-icon">{icon}</div><div><div class="tx-name">{r.get("name", "Transaction")}</div><div class="tx-type">{str(r.get("type", "")).title()}</div></div></div><div class="tx-right">₱{float(r.get("amount", 0)):,.2f}<div class="tx-date">{r.get("date", "")}</div></div></div>'''
+        else:
+            tx_html = '<div style="padding:30px 0;color:#7a857e;text-align:center">No transactions yet.</div>'
+        st.markdown(
+            f'''<div class="dash-section"><div class="section-head"><div class="section-title" style="margin:0">RECENT TRANSACTIONS</div><span style="font-size:11px;color:#7b867f">LATEST 5</span></div>{tx_html}</div>''',
+            unsafe_allow_html=True)
 
-elif view == "snake_game":
-        st.subheader("🐍 OWNER CHASE | CONSTRUCTION RUN")
-        st.caption("Guide the snake through the worksite, collect materials, and catch the running owner. Walls increase with every level.")
-        components.html("""
-        <style>
-            html, body { margin: 0; padding: 0; background: transparent; font-family: system-ui, sans-serif; }
-            .game-shell { max-width: 760px; margin: 0 auto; padding: 18px; color: #eafff1; border: 1px solid rgba(166,255,202,.28); border-radius: 24px; background: linear-gradient(145deg, rgba(8,54,34,.90), rgba(2,24,16,.92)); box-shadow: 0 22px 50px rgba(0,0,0,.34), inset 0 1px 0 rgba(255,255,255,.12); }
-            .game-head { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; font-size:12px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }
-            .game-head strong { color:#72f7b0; font-size:17px; }
-            canvas { display:block; width:100%; max-width:700px; margin:0 auto; border:1px solid rgba(166,255,202,.26); border-radius:16px; background:#06170f; image-rendering:pixelated; }
-            .game-controls { display:flex; justify-content:center; gap:8px; margin-top:12px; }
-            .game-controls button { min-width:52px; min-height:40px; border:1px solid rgba(166,255,202,.28); border-radius:12px; color:#ecfff3; background:#0b3d28; font-size:18px; font-weight:900; }
-            .game-controls button:active { background:#176642; }
-            .game-message { min-height:20px; margin-top:9px; text-align:center; color:#bceccf; font-size:12px; }
-        </style>
-        <div class="game-shell">
-            <div class="game-head"><span>Materials: <strong id="score">0</strong></span><span>Level: <strong id="level">1</strong></span><span>Owner: <strong id="status">RUNNING</strong></span></div>
-            <canvas id="board" width="700" height="460" aria-label="Construction owner chase game"></canvas>
-            <div class="game-controls"><button data-dir="up">▲</button></div>
-            <div class="game-controls"><button data-dir="left">◀</button><button data-dir="down">▼</button><button data-dir="right">▶</button></div>
-            <div id="message" class="game-message">Use arrow keys, WASD, or the controls. The owner does not attack the snake.</div>
+    st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
+    st.markdown(f"""
+    <div class="dash-section">
+      <div class="schedule">
+        <div class="schedule-icon">▦</div>
+        <div><div class="schedule-title">TODAY'S SCHEDULE</div><div style="font-weight:800;font-size:13px;margin-top:4px">{manila_now().strftime('%B %d, %Y (%A)')}</div><div class="schedule-muted">{len(today_tasks)} task(s) scheduled for today.</div></div>
+        <div style="width:1px;height:58px;background:#dfe8e1;margin:0 12px"></div>
+        <div><div class="schedule-title">UPCOMING TASKS</div><div style="font-weight:800;font-size:13px;margin-top:4px">{len(upcoming_tasks)} task(s) planned</div><div class="schedule-muted">Stay on track and manage your construction tasks.</div></div>
+        <div style="margin-left:auto"><div class="open-planner">▣ &nbsp; Open Planner</div></div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+    if st.button("OPEN CONSTRUCTION PLANNER", use_container_width=True):
+        set_view("planner_output")
+
+        st.markdown("""
+        <div class="dashboard-action-rail">
+            <div class="dashboard-action-copy">
+                <span>QUICK OPERATIONS</span>
+                <small>Open one focused workspace at a time.</small>
+            </div>
         </div>
-        <script>
-            (() => {
-                const canvas = document.getElementById('board'), ctx = canvas.getContext('2d');
-                const cols = 28, rows = 18, cell = 25;
-                let snake, owner, material, walls, direction, nextDirection, score = 0, level = 1, running = true, timer;
-                const scoreEl = document.getElementById('score'), levelEl = document.getElementById('level'), statusEl = document.getElementById('status'), messageEl = document.getElementById('message');
-                const same = (a,b) => a.x === b.x && a.y === b.y;
-                const freeCell = () => {
-                    let point;
-                    do { point = {x: Math.floor(Math.random()*cols), y: Math.floor(Math.random()*rows)}; }
-                    while (snake.some(p => same(p, point)) || walls.some(p => same(p, point)) || same(owner, point));
-                    return point;
-                };
-                function buildWalls() {
-                    walls = [];
-                    const count = Math.min(4 + level * 2, 40);
-                    for (let i=0; i<count; i++) {
-                        const point = {x: 3 + Math.floor(Math.random()*(cols-6)), y: 2 + Math.floor(Math.random()*(rows-4))};
-                        if (!snake.some(p => same(p, point))) walls.push(point);
-                    }
-                }
-                function reset() {
-                    snake = [{x: 5,y:9},{x:4,y:9},{x:3,y:9}]; owner = {x:22,y:9}; direction = {x:1,y:0}; nextDirection = direction; score = 0; level = 1; running = true; buildWalls(); material = freeCell(); updateLabels(); messageEl.textContent = 'Catch the owner and collect materials. Walls grow each level.'; clearInterval(timer); timer = setInterval(tick, 150); draw();
-                }
-                function updateLabels() { scoreEl.textContent = score; levelEl.textContent = level; statusEl.textContent = running ? 'RUNNING' : 'READY'; }
-                function setDirection(name) { const dirs = {up:{x:0,y:-1},down:{x:0,y:1},left:{x:-1,y:0},right:{x:1,y:0}}; const candidate = dirs[name]; if (candidate && !(candidate.x === -direction.x && candidate.y === -direction.y)) nextDirection = candidate; }
-                function tick() {
-                    if (!running) return;
-                    direction = nextDirection;
-                    const head = {x: (snake[0].x + direction.x + cols) % cols, y: (snake[0].y + direction.y + rows) % rows};
-                    if (walls.some(p => same(p, head))) { messageEl.textContent = 'A wall blocked the route. Press R or tap the board to run again.'; running = false; updateLabels(); return; }
-                    snake.unshift(head);
-                    if (same(head, owner)) { score += 10 * level; level += 1; buildWalls(); messageEl.textContent = 'Owner caught. New worksite level unlocked.'; }
-                    if (same(head, material)) { score += 2; material = freeCell(); } else snake.pop();
-                    if (same(head, owner)) owner = freeCell();
-                    moveOwner(); updateLabels(); draw();
-                }
-                function moveOwner() {
-                    const options = [{x:1,y:0},{x:-1,y:0},{x:0,y:1},{x:0,y:-1}].filter(d => {
-                        const p = {x:(owner.x+d.x+cols)%cols,y:(owner.y+d.y+rows)%rows}; return !walls.some(w=>same(w,p));
-                    });
-                    options.sort((a,b) => { const pa={x:(owner.x+a.x+cols)%cols,y:(owner.y+a.y+rows)%rows}, pb={x:(owner.x+b.x+cols)%cols,y:(owner.y+b.y+rows)%rows}; return Math.hypot(pa.x-snake[0].x,pa.y-snake[0].y)-Math.hypot(pb.x-snake[0].x,pb.y-snake[0].y); });
-                    if (options.length && Math.random() > .18) { owner.x=(owner.x+options[0].x+cols)%cols; owner.y=(owner.y+options[0].y+rows)%rows; }
-                }
-                function draw() {
-                    ctx.fillStyle='#06170f'; ctx.fillRect(0,0,canvas.width,canvas.height);
-                    ctx.strokeStyle='rgba(145,230,174,.08)'; for(let x=0;x<cols;x++){ctx.beginPath();ctx.moveTo(x*cell,0);ctx.lineTo(x*cell,canvas.height);ctx.stroke();} for(let y=0;y<rows;y++){ctx.beginPath();ctx.moveTo(0,y*cell);ctx.lineTo(canvas.width,y*cell);ctx.stroke();}
-                    walls.forEach(p=>{ctx.fillStyle='#725b43';ctx.fillRect(p.x*cell+2,p.y*cell+2,cell-4,cell-4);ctx.fillStyle='#a98a60';ctx.fillRect(p.x*cell+6,p.y*cell+6,cell-12,4);});
-                    ctx.fillStyle='#d9a441';ctx.fillRect(material.x*cell+5,material.y*cell+5,cell-10,cell-10);ctx.fillStyle='#fff1ae';ctx.fillRect(material.x*cell+9,material.y*cell+8,cell-18,4);
-                    ctx.fillStyle='#ff856f';ctx.fillRect(owner.x*cell+4,owner.y*cell+4,cell-8,cell-8);ctx.fillStyle='#fff2df';ctx.fillRect(owner.x*cell+8,owner.y*cell+8,4,4);ctx.fillRect(owner.x*cell+15,owner.y*cell+8,4,4);
-                    snake.forEach((p,i)=>{ctx.fillStyle=i===0?'#72f7b0':'#31b879';ctx.fillRect(p.x*cell+3,p.y*cell+3,cell-6,cell-6);});
-                }
-                document.addEventListener('keydown', e => { const keys={ArrowUp:'up',w:'up',ArrowDown:'down',s:'down',ArrowLeft:'left',a:'left',ArrowRight:'right',d:'right'}; if(e.key==='r'||e.key==='R'){reset();return;} if(keys[e.key]){e.preventDefault();setDirection(keys[e.key]);} });
-                document.querySelectorAll('[data-dir]').forEach(button=>button.addEventListener('click',()=>setDirection(button.dataset.dir)));
-                canvas.addEventListener('click',()=>{if(!running)reset();}); reset();
-            })();
-        </script>
-        """, height=680, scrolling=False)
-        if st.button("🏠 RETURN TO HOME", use_container_width=True, key="snake_home"):
-                set_view("home")
+        """, unsafe_allow_html=True)
+        material_action, payroll_action = st.columns(2)
+        with material_action:
+                if st.button("◇  MATERIALS WORKSPACE", key="dashboard_materials_workspace", use_container_width=True):
+                        set_view("material")
+        with payroll_action:
+                if st.button("♙  PAYROLL WORKSPACE", key="dashboard_payroll_workspace", use_container_width=True):
+                        set_view("payroll_ledger")
 
-elif view == "monthly_close":
-    st.subheader("🔒 MONTHLY FINANCIAL CLOSING")
-    st.caption("Review a month, preserve its totals, and prevent new entries from changing the approved period.")
-    selected_month = st.selectbox("Month to review", available_financial_months(), key="closing_month")
-    summary = month_summary({
-        "records": st.session_state.records,
-        "labor_records": st.session_state.labor_records,
-        "payroll_expenses": st.session_state.payroll_expenses,
-    }, selected_month)
-    st.dataframe([
-        {"Category": "Materials", "Total": f"PHP {summary.get('material', 0):,.2f}"},
-        {"Category": "Construction expenses", "Total": f"PHP {summary.get('expense', 0):,.2f}"},
-        {"Category": "Labor", "Total": f"PHP {summary.get('labor', 0):,.2f}"},
-        {"Category": "Payroll expenses", "Total": f"PHP {summary.get('payroll', 0):,.2f}"},
-        {"Category": "Total spending", "Total": f"PHP {summary.get('spent', 0):,.2f}"},
-    ], use_container_width=True, hide_index=True)
-    existing_close = st.session_state.financial_closes.get(selected_month)
-    if existing_close and existing_close.get("closed"):
-        st.success(f"{selected_month} is closed by {existing_close.get('closed_by', 'Project Manager')} on {existing_close.get('closed_at', '')}.")
-        if existing_close.get("note"):
-            st.info(existing_close["note"])
-    else:
-        close_note = st.text_area("Closing note", placeholder="Approval reference, client confirmation, or final-month note...")
-        confirm_close = st.checkbox("I reviewed the totals and want to lock this month.", key="confirm_month_close")
-        if st.button("CLOSE MONTH", type="primary", disabled=not confirm_close, use_container_width=True):
-            st.session_state.financial_closes = close_month(
-                st.session_state.financial_closes,
-                selected_month,
-                summary,
-                manila_now().isoformat(),
-                note=close_note,
-            )
-            persist_state()
-            st.success(f"{selected_month} is now closed.")
-            st.rerun()
-    st.divider()
-    if st.button("🏠 RETURN TO HOME", use_container_width=True, key="closing_home"):
-        set_view("home")
+elif view == "payroll_dashboard":
+    payroll_labor = sum(float(record.get("net", 0)) for record in st.session_state.labor_records)
+    payroll_expenses = sum(float(record.get("price", 0)) for record in st.session_state.payroll_expenses)
+    payroll_total = payroll_labor + payroll_expenses
+    payroll_remaining = float(st.session_state.remaining_money or 0)
+    payroll_output = payroll_total - payroll_remaining
 
-elif view == "word_puzzle":
-    st.subheader("🧩 AILYN WORD PUZZLE")
-    st.caption("Randomized construction words and arithmetic challenges from easy to hardest.")
-    game_mode = st.radio("Challenge", ["Words", "Math"], horizontal=True, key="puzzle_game_mode")
-    if game_mode == "Words":
-        current_level = int(st.session_state.puzzle_level)
-        puzzle = puzzle_for_level(current_level, st.session_state.puzzle_seed)
-        score, streak, level = st.session_state.puzzle_score, st.session_state.puzzle_streak, current_level
-        prompt = "Type the unscrambled word..."
-    else:
-        current_level = int(st.session_state.math_level)
-        math_question, math_answer = math_problem(current_level, st.session_state.math_seed)
-        score, streak, level = st.session_state.math_score, st.session_state.math_streak, current_level
-        prompt = "Enter the numeric answer..."
-    score_col, streak_col, level_col = st.columns(3)
-    with score_col:
-        st.metric("Score", score)
-    with streak_col:
-        st.metric("Streak", streak)
-    with level_col:
-        st.metric("Level", level)
-    if game_mode == "Words":
-        st.markdown(
-            f"<div class='puzzle-card'><div class='puzzle-level'>WORD LEVEL {level}</div>"
-            f"<div class='puzzle-scramble'>{puzzle['scramble']}</div>"
-            f"<div class='puzzle-hint'>Hint: {puzzle['hint']}</div></div>",
-            unsafe_allow_html=True,
-        )
-    else:
-        st.markdown(
-            f"<div class='puzzle-card'><div class='puzzle-level'>MATH LEVEL {level}</div>"
-            f"<div class='puzzle-scramble'>{math_question}</div>"
-            "<div class='puzzle-hint'>Solve without a calculator. Difficulty increases each level.</div></div>",
-            unsafe_allow_html=True,
-        )
-    with st.form("word_puzzle_form", clear_on_submit=True):
-        if game_mode == "Words":
-            answer = st.text_input("Your answer", placeholder=prompt)
-        else:
-            answer = st.number_input("Your answer", value=None, placeholder=prompt)
-        submitted = st.form_submit_button("CHECK ANSWER", use_container_width=True)
-    if submitted:
-        correct = check_guess(level, answer, st.session_state.puzzle_seed) if game_mode == "Words" else check_math_answer(math_answer, answer)
-        if correct:
-            if game_mode == "Words":
-                st.session_state.puzzle_score += level * 10
-                st.session_state.puzzle_streak += 1
-                st.session_state.puzzle_level = level + 1
-            else:
-                st.session_state.math_score += level * 10
-                st.session_state.math_streak += 1
-                st.session_state.math_level = level + 1
-            persist_state()
-            st.success("Correct. Level unlocked!")
-            st.rerun()
-        else:
-            if game_mode == "Words":
-                st.session_state.puzzle_streak = 0
-            else:
-                st.session_state.math_streak = 0
-            persist_state()
-            st.error("Not quite. Try again.")
-    if st.button("RESET PUZZLE PROGRESS", key="reset_puzzle"):
-        st.session_state.puzzle_level = 1
-        st.session_state.puzzle_score = 0
-        st.session_state.puzzle_streak = 0
-        st.session_state.puzzle_seed = random.SystemRandom().randrange(1, 1_000_000)
-        st.session_state.math_level = 1
-        st.session_state.math_score = 0
-        st.session_state.math_streak = 0
-        st.session_state.math_seed = random.SystemRandom().randrange(1, 1_000_000)
-        persist_state()
-        st.rerun()
+    st.markdown(f"""
+        <div class="dashboard-heading">
+            <img src="{AILYN_LOGO_DATA}" alt="Ailyn Construction Logo">
+            <div>
+                <div class="dashboard-heading-title">PAYROLL DASHBOARD</div>
+                <div class="dashboard-heading-sub">AILYN HOUSE PROJECT | AILYN HOUSE</div>
+            </div>
+        </div>
+        <div class="dashboard-welcome">Payroll control center for labor accounts, payroll expenses, and final payouts.</div>
+    """, unsafe_allow_html=True)
+    st.caption("A focused view of labor, payroll expenses, and the current payout.")
+    p1, p2, p3, p4 = st.columns(4)
+    with p1:
+        st.metric("Workers", len(st.session_state.labor_records))
+    with p2:
+        st.metric("Net labor", f"PHP {payroll_labor:,.2f}")
+    with p3:
+        st.metric("Payroll expenses", f"PHP {payroll_expenses:,.2f}")
+    with p4:
+        st.metric("Final payout", f"PHP {payroll_output:,.2f}")
+
     st.divider()
-    if st.button("🏠 RETURN TO HOME", use_container_width=True, key="puzzle_home"):
-        set_view("home")
+    left, right = st.columns(2)
+    with left:
+        st.subheader("Role summary")
+        role_rows = []
+        for role in FULL_DAY_RATES:
+            role_records = [r for r in st.session_state.labor_records if r.get("role") == role]
+            role_rows.append({
+                "Role": role,
+                "Workers": len(role_records),
+                "Days": sum(float(r.get("days", 0)) for r in role_records),
+                "Net pay": f"PHP {sum(float(r.get('net', 0)) for r in role_records):,.2f}",
+            })
+        st.dataframe(role_rows, use_container_width=True, hide_index=True)
+    with right:
+        st.subheader("Payroll controls")
+        st.write(f"Current remainder: **PHP {payroll_remaining:,.2f}**")
+        if st.button("ADD LABOR ACCOUNT", use_container_width=True):
+            payroll_labor_dialog()
+        if st.button("OPEN PAYROLL LEDGER", use_container_width=True):
+            payroll_ledger_dialog()
+        if st.button("CREATE PAYROLL REPORT", use_container_width=True):
+            payroll_report_dialog()
+
+    st.subheader("Latest labor accounts")
+    if st.session_state.labor_records:
+        st.dataframe([
+            {"Worker": r.get("name", ""), "Role": r.get("role", "Labor"),
+             "Days": f"{float(r.get('days', 0)):.1f}",
+             "Net pay": f"PHP {float(r.get('net', 0)):,.2f}"}
+            for r in reversed(st.session_state.labor_records[-8:])
+        ], use_container_width=True, hide_index=True)
+    else:
+        st.info("No labor accounts yet. Add the first worker from Payroll Operations.")
 
 elif view == "planner_input":
     st.subheader("📅 PLANNER INPUT - ADD NEW WORK TASK")
@@ -3564,9 +2575,6 @@ elif view == "excess":
         submitted = st.form_submit_button(label="ADD EXCESS")
         if submitted:
             if amount and amount > 0:
-                if month_is_closed(manila_now().strftime("%Y-%m")):
-                    st.warning("This month is financially closed. Reopen it before adding funds.")
-                    st.stop()
                 st.session_state.records.append({
                     "id": str(time.time()),
                     "date": manila_now().strftime("%b %d, %Y"),
@@ -3633,9 +2641,6 @@ elif view == "ledger":
                     cancel_record = st.form_submit_button("CANCEL")
                 if save_record:
                     if edited_name.strip() and edited_amount > 0:
-                        if month_is_closed(month_key(r)):
-                            st.warning("This month is closed. Reopen it before editing financial records.")
-                            continue
                         r["name"] = edited_name.strip().upper()
                         r["price"] = float(edited_amount)
                         r["qty"] = int(edited_qty)
@@ -3702,9 +2707,6 @@ elif view == "add_labor":
             d = float(days or 0.0)
             c = float(ca or 0.0)
             if d > 0 and name.strip():
-                if month_is_closed(manila_now().strftime("%Y-%m")):
-                    st.warning("This month is financially closed. Reopen it before adding payroll.")
-                    st.stop()
                 gross_pay, full_pay, partial_pay = calculate_labor_pay(d, active_role)
                 net = gross_pay - c
                 rate = FULL_DAY_RATES.get(active_role, 0.0)
@@ -3734,9 +2736,6 @@ elif view == "add_payroll_expense":
         submitted = st.form_submit_button("💾 SAVE EXPENSE")
         if submitted:
             if amt and amt > 0:
-                if month_is_closed(manila_now().strftime("%Y-%m")):
-                    st.warning("This month is financially closed. Reopen it before adding payroll.")
-                    st.stop()
                 st.session_state.payroll_expenses.append({
                     "id": str(uuid.uuid4()),
                     "date": manila_now().strftime("%b %d, %Y"),
@@ -3766,10 +2765,8 @@ elif view == "payroll_remaining":
 elif view == "payroll_ledger":
     st.subheader("📋 LABOR & PAYROLL LEDGER")
     payroll_query = st.text_input("Search payroll entries", key="payroll_ledger_search").strip().lower()
-    visible_labor = [record for record in st.session_state.labor_records if
-                     not payroll_query or payroll_query in str(record).lower()]
-    visible_payroll_expenses = [record for record in st.session_state.payroll_expenses if
-                                not payroll_query or payroll_query in str(record).lower()]
+    visible_labor = [record for record in st.session_state.labor_records if not payroll_query or payroll_query in str(record).lower()]
+    visible_payroll_expenses = [record for record in st.session_state.payroll_expenses if not payroll_query or payroll_query in str(record).lower()]
     st.markdown("### Labor Records")
     if not st.session_state.labor_records:
         st.info("No labor records.")
@@ -3799,9 +2796,6 @@ elif view == "payroll_ledger":
                     cancel_labor = st.form_submit_button("CANCEL")
                 if save_labor:
                     if edited_worker.strip() and edited_days > 0:
-                        if month_is_closed(month_key(r)):
-                            st.warning("This month is closed. Reopen it before editing payroll records.")
-                            continue
                         gross_pay, full_pay, partial_pay = calculate_labor_pay(float(edited_days), edited_role)
                         r.update({
                             "name": edited_worker.strip().upper(),
@@ -3861,9 +2855,6 @@ elif view == "payroll_ledger":
                     cancel_payroll_expense = st.form_submit_button("CANCEL")
                 if save_payroll_expense:
                     if edited_description.strip() and edited_price > 0:
-                        if month_is_closed(month_key(e)):
-                            st.warning("This month is closed. Reopen it before editing payroll expenses.")
-                            continue
                         e["item"] = edited_description.strip().upper()
                         e["price"] = float(edited_price)
                         st.session_state.editing_payroll_expense_index = None
@@ -3980,14 +2971,13 @@ elif view == "receipt_archive":
                     use_container_width=True,
                 )
     with restore_col:
-        restore_admin_password = st.text_input("Admin password for restore", type="password",
-                                               key="restore_admin_password")
-        restore_file = st.file_uploader("Restore complete backup", type=["zip", "db"], key="restore_backup_file")
+        restore_admin_password = st.text_input("Admin password for restore", type="password", key="restore_admin_password")
+        restore_file = st.file_uploader("Restore SQLite backup", type=["db"], key="restore_backup_file")
         if restore_file and st.button("RESTORE BACKUP", use_container_width=True):
             if not ADMIN_PASSWORD or not hmac.compare_digest(restore_admin_password, ADMIN_PASSWORD):
                 st.error("Administrator authentication failed.")
                 st.stop()
-            temporary_restore = os.path.join(DATA_DIR, f".uploaded-restore.{restore_file.name.rsplit('.', 1)[-1].lower()}")
+            temporary_restore = os.path.join(APP_DIR, ".uploaded-restore.db")
             with open(temporary_restore, "wb") as restore_target:
                 restore_target.write(restore_file.getvalue())
             try:
@@ -4095,7 +3085,7 @@ elif view == "update":
             st.error(str(error))
     st.divider()
     st.subheader("Backups")
-    backup_dir = os.path.join(DATA_DIR, "backups")
+    backup_dir = os.path.join(APP_DIR, "backups")
     backup_names = sorted(os.listdir(backup_dir), reverse=True) if os.path.isdir(backup_dir) else []
     if backup_names:
         st.dataframe([{"Backup": name} for name in backup_names[:10]], use_container_width=True, hide_index=True)
@@ -4105,23 +3095,3 @@ elif view == "update":
 else:
     st.info("Welcome to Ailyn Project Management System. Use the command sidebar to navigate.")
 
-st.markdown("<div class='mobile-nav-marker'></div>", unsafe_allow_html=True)
-mobile_home, mobile_financials, mobile_planner, mobile_more = st.columns(4)
-with mobile_home:
-    if st.button("⌂ HOME", key="mobile_home", use_container_width=True):
-        st.session_state.view = "home"
-        st.session_state.dashboard_section = "overview"
-        st.rerun()
-with mobile_financials:
-    if st.button("₱ MONEY", key="mobile_financials", use_container_width=True):
-        st.session_state.view = "home"
-        st.session_state.dashboard_section = "financials"
-        st.rerun()
-with mobile_planner:
-    if st.button("▦ PLAN", key="mobile_planner", use_container_width=True):
-        st.session_state.view = "planner_output"
-        st.rerun()
-with mobile_more:
-    if st.button("☰ MORE", key="mobile_more", use_container_width=True):
-        st.session_state.view = "receipt_archive"
-        st.rerun()
