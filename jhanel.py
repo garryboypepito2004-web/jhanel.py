@@ -1,4 +1,3 @@
-
 import os
 import time
 import base64
@@ -113,6 +112,7 @@ PERSISTENT_KEYS = [
     "client_notes",
     "app_settings",
     "messages",
+    "ui_theme",
 ]
 
 def load_state():
@@ -338,6 +338,8 @@ if "scanner_camera_mode" not in st.session_state:
     st.session_state.scanner_camera_mode = "Back camera"
 if "dark_mode" not in st.session_state:
     st.session_state.dark_mode = False
+if "ui_theme" not in st.session_state:
+    st.session_state.ui_theme = "normal"
 if not os.path.exists(EXCEL_FILE):
     write_excel(st.session_state)
 if not os.path.exists(MATERIALS_EXCEL_FILE) or not os.path.exists(LABOR_EXCEL_FILE):
@@ -355,6 +357,14 @@ if "sidebar_mode" not in st.session_state:
 
 def set_sidebar_mode(mode):
     st.session_state.sidebar_mode = mode
+    st.rerun()
+
+
+def set_ui_theme(theme):
+    st.session_state.ui_theme = theme
+    # Keep the legacy flag synchronized for older parts of the app.
+    st.session_state.dark_mode = theme in {"dark", "contrast"}
+    persist_state()
     st.rerun()
 
 
@@ -2201,6 +2211,102 @@ section[data-testid="stSidebar"] > div {{
 </style>
 """, unsafe_allow_html=True)
 
+# Theme class is applied to the app root using a small marker element.
+st.markdown(f"""
+<style>
+/* ================================================================
+   CLIENT IDENTITY + FOUR DISPLAY MODES
+   low = softer/dimmer, normal = balanced, dark = deep dark,
+   contrast = sharp high-contrast text and image presentation.
+   ================================================================ */
+.sidebar-client-card {{
+    margin: 8px 2px 14px;
+    padding: 15px 14px;
+    border-radius: 18px;
+    background: linear-gradient(145deg, rgba(18,108,63,.62), rgba(2,25,15,.72));
+    border: 1px solid rgba(151,255,196,.34);
+    box-shadow: 0 12px 30px rgba(0,0,0,.34), inset 0 1px 0 rgba(255,255,255,.10);
+}}
+.sidebar-client-kicker {{
+    color:#86f5b2 !important; font-size:8px; font-weight:900;
+    letter-spacing:.16em; text-transform:uppercase;
+}}
+.sidebar-client-name {{
+    margin-top:5px; color:#ffffff !important; font-size:18px;
+    font-weight:950; letter-spacing:.035em; line-height:1.12;
+    overflow-wrap:anywhere;
+}}
+.sidebar-client-project {{
+    margin-top:6px; color:#c4ecd4 !important; font-size:9px;
+    font-weight:800; letter-spacing:.07em; line-height:1.35;
+    overflow-wrap:anywhere;
+}}
+.sidebar-client-status {{
+    display:inline-block; margin-top:9px; padding:5px 8px;
+    border-radius:8px; background:rgba(114,247,176,.10);
+    color:#9dffc0 !important; font-size:8px; font-weight:900;
+    letter-spacing:.10em;
+}}
+.sidebar-client-status span {{ color:#52f39a !important; }}
+.sidebar-theme-title {{
+    margin:14px 5px 7px; color:#72f7b0 !important;
+    font-size:9px; font-weight:900; letter-spacing:.15em;
+    text-transform:uppercase;
+}}
+/* Theme engine: the marker controls the whole application. */
+body:has(.ui-theme-low) .stApp {{
+    filter: brightness(.82) saturate(.92);
+}}
+body:has(.ui-theme-normal) .stApp {{
+    filter: brightness(1) saturate(1);
+}}
+body:has(.ui-theme-dark) .stApp {{
+    filter: brightness(.72) saturate(.90);
+}}
+body:has(.ui-theme-contrast) .stApp {{
+    filter: brightness(.96) contrast(1.12) saturate(1.08);
+}}
+body:has(.ui-theme-low) [data-testid="stSidebar"] {{
+    opacity:.90;
+}}
+body:has(.ui-theme-normal) [data-testid="stSidebar"] {{
+    opacity:1;
+}}
+body:has(.ui-theme-dark) [data-testid="stSidebar"] {{
+    opacity:.96;
+}}
+body:has(.ui-theme-contrast) [data-testid="stSidebar"] {{
+    opacity:1;
+}}
+/* Sharper image/background quality without changing source resolution. */
+body:has(.ui-theme-contrast) .stApp {{
+    image-rendering:auto;
+}}
+body:has(.ui-theme-contrast) .stApp {{
+    background-image:
+      linear-gradient(115deg, rgba(0,8,4,.18), rgba(0,20,10,.25)),
+      url("https://images.unsplash.com/photo-1600585154340-be6161a56a0c") !important;
+    background-size:cover !important;
+    background-position:center center !important;
+    background-attachment:fixed !important;
+}}
+/* Make the contrast mode crisp instead of washed-out glass. */
+body:has(.ui-theme-contrast) .dash-section,
+body:has(.ui-theme-contrast) [data-testid="stMetric"],
+body:has(.ui-theme-contrast) .integrated-item,
+body:has(.ui-theme-contrast) .integrated-total {{
+    border-color:rgba(180,255,210,.42) !important;
+    box-shadow:0 12px 30px rgba(0,0,0,.38), inset 0 1px 0 rgba(255,255,255,.16) !important;
+}}
+body:has(.ui-theme-contrast) .dashboard-heading-title,
+body:has(.ui-theme-contrast) .section-title,
+body:has(.ui-theme-contrast) [data-testid="stMetricValue"] {{
+    text-shadow:0 2px 10px rgba(0,0,0,.75) !important;
+}}
+</style>
+<div class="ui-theme-{st.session_state.get("ui_theme","normal")}" aria-hidden="true"></div>
+""", unsafe_allow_html=True)
+
 with st.sidebar:
     st.markdown(f"""
     <div class="sidebar-brand">
@@ -2219,8 +2325,34 @@ with st.sidebar:
         unsafe_allow_html=True
     )
 
+    # Strong client/project identity card.
+    client_name = st.session_state.project.get("client", "").strip() or "CLIENT NOT SET"
+    project_name = st.session_state.project.get("name", "Ailyn House Project")
+    project_status = st.session_state.project.get("status", "Active")
+    st.markdown(f"""
+    <div class="sidebar-client-card">
+        <div class="sidebar-client-kicker">CLIENT / PROJECT OWNER</div>
+        <div class="sidebar-client-name">{client_name}</div>
+        <div class="sidebar-client-project">{project_name}</div>
+        <div class="sidebar-client-status"><span>●</span> {project_status.upper()}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("<div class='sidebar-theme-title'>DISPLAY / LIGHT CONTROL</div>", unsafe_allow_html=True)
+    theme_left, theme_right = st.columns(2)
+    with theme_left:
+        if st.button("LOW LIGHT", use_container_width=True, key="theme_low"):
+            set_ui_theme("low")
+        if st.button("NORMAL", use_container_width=True, key="theme_normal"):
+            set_ui_theme("normal")
+    with theme_right:
+        if st.button("DARK", use_container_width=True, key="theme_dark"):
+            set_ui_theme("dark")
+        if st.button("HIGH CONTRAST", use_container_width=True, key="theme_contrast"):
+            set_ui_theme("contrast")
+
     st.markdown(
-        f"<div class='sidebar-size-row'><span>{'WIDE' if sidebar_mode == 'wide' else 'COMPACT'} MODE</span><span>DRAG EDGE ↔</span></div>",
+        f"<div class='sidebar-size-row'><span>{'WIDE' if sidebar_mode == 'wide' else 'COMPACT'} MODE</span><span>{st.session_state.get('ui_theme','normal').upper()}</span></div>",
         unsafe_allow_html=True
     )
     size_left, size_right = st.columns(2)
@@ -2332,6 +2464,15 @@ if view == "home":
             f"Client: {project.get('client') or 'Not set'}  |  Site: {project.get('address') or 'Not set'}  |  "
             f"Target: {project.get('target_date') or 'Not set'}  |  Status: {project.get('status', 'Active')}"
         )
+    # Primary workspace buttons: Materials and Payroll.
+    top_material, top_payroll = st.columns(2)
+    with top_material:
+        if st.button("◇  MATERIALS", key="dashboard_top_materials", use_container_width=True):
+            set_view("material")
+    with top_payroll:
+        if st.button("♙  PAYROLL", key="dashboard_top_payroll", use_container_width=True):
+            set_view("payroll_dashboard")
+
     overdue_tasks = [
         task for task in st.session_state.planner_tasks
         if task.get("date_obj", "") < manila_now().strftime("%Y-%m-%d")
