@@ -1529,6 +1529,7 @@ section[data-testid="stSidebar"]{
   box-shadow:18px 0 55px rgba(0,0,0,.52)!important;
   backdrop-filter:blur(18px) saturate(150%)!important;
   -webkit-backdrop-filter:blur(18px) saturate(150%)!important;
+  transition: width .32s cubic-bezier(.22,1,.36,1), transform .32s cubic-bezier(.22,1,.36,1), box-shadow .32s ease, opacity .24s ease !important;
 }
 section[data-testid="stSidebar"] > div{padding:22px 14px 30px!important}
 section[data-testid="stSidebar"] *{color:#eefcf4!important}
@@ -1537,9 +1538,9 @@ section[data-testid="stSidebar"] *{color:#eefcf4!important}
   background:linear-gradient(145deg,#0d2a1f,#071912);
   border:1px solid rgba(126,255,191,.32);
   box-shadow:0 16px 32px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.10), 0 0 18px rgba(99,249,167,.12);
-  transition:all .22s ease;
+  transition:all .22s ease, transform .3s ease, box-shadow .3s ease;
 }
-.sidebar-brand:hover{transform:translateY(-2px);border-color:rgba(138,255,201,.58);box-shadow:0 22px 38px rgba(0,0,0,.35),0 0 24px rgba(96,245,169,.18)}
+.sidebar-brand:hover{transform:translateY(-2px) scale(1.01);border-color:rgba(138,255,201,.58);box-shadow:0 22px 38px rgba(0,0,0,.35),0 0 24px rgba(96,245,169,.18)}
 .sidebar-brand:after{content:"";position:absolute;inset:-30% 20% auto auto;width:120px;height:120px;border-radius:50%;background:radial-gradient(circle,rgba(126,255,191,.22),transparent 60%);pointer-events:none}
 .brand-row{position:relative;z-index:1;display:flex;align-items:center;gap:14px}.brand-logo{width:58px;height:58px;object-fit:contain;filter:drop-shadow(0 10px 16px rgba(0,0,0,.28));transition:transform .22s ease}.sidebar-brand:hover .brand-logo{transform:translateY(-2px) scale(1.06)}.brand-copy{min-width:0}.brand-title{font-family:'Outfit';font-size:16px;font-weight:900;letter-spacing:.07em;line-height:1.08;color:#fff!important}.brand-title span{display:block}.brand-sub{font-size:9px;color:#9af0c0!important;letter-spacing:.15em;text-transform:uppercase;margin-top:7px;font-weight:800}
 section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h3{font-family:'Outfit';font-size:10px!important;letter-spacing:.18em;text-transform:uppercase;color:#7df6b8!important;margin:20px 5px 9px!important;display:flex;align-items:center;gap:9px} section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h3:before{content:'•';font-size:20px;line-height:0;color:#5af0a7;text-shadow:0 0 12px rgba(90,240,167,.9)} section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h3:after{content:'';height:1px;flex:1;background:linear-gradient(90deg,rgba(125,246,184,.38),transparent)}section[data-testid="stSidebar"] hr{border-color:rgba(170,255,198,.10)!important;margin:10px 4px!important}.sidebar-gap{height:8px}.sidebar-live{margin:0 0 12px;padding:8px 10px;border-radius:12px;background:rgba(113,249,175,.08);border:1px solid rgba(113,249,175,.22);color:#abf7c8!important;font-size:9px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;text-align:center;box-shadow:inset 0 1px 0 rgba(255,255,255,.06)}
@@ -1626,6 +1627,31 @@ section[data-testid="stSidebar"] button p{font-size:13px!important;white-space:n
   section[data-testid="stSidebar"] button{min-height:58px!important;}
   section[data-testid="stSidebar"] button p{font-size:14px!important;}
 }
+@media (min-width:2560px){
+  .stApp {
+    background-position: center center !important;
+    background-size: cover !important;
+  }
+  .block-container {
+    max-width: 2100px !important;
+    padding-left: 42px !important;
+    padding-right: 42px !important;
+    padding-top: 24px !important;
+  }
+  .ops-topbar,
+  .ops-heading,
+  .ops-kpi,
+  .ops-panel,
+  .ops-quick {
+    border-radius: 26px !important;
+  }
+  .ops-kpi-value {
+    font-size: clamp(2.2rem, 2vw, 3.2rem) !important;
+  }
+  .ops-greeting strong {
+    font-size: clamp(2rem, 2vw, 3rem) !important;
+  }
+}
 .save-img-btn{font-weight:900!important;letter-spacing:.02em!important}
 
 /* FINAL SIDEBAR + DASHBOARD MATCH OVERRIDES */
@@ -1693,6 +1719,27 @@ section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h3{
   .block-container{max-width:1500px!important;padding-top:20px!important;}
   .dashboard-heading-title{font-size:32px;}
 }
+@media (min-width:2560px) {
+  .block-container {
+    max-width: 2100px !important;
+    padding-left: 42px !important;
+    padding-right: 42px !important;
+    padding-top: 24px !important;
+  }
+  .ops-topbar,
+  .ops-heading,
+  .ops-kpi,
+  .ops-panel,
+  .ops-quick {
+    border-radius: 26px !important;
+  }
+  .ops-kpi-value {
+    font-size: clamp(2.2rem, 2vw, 3.2rem) !important;
+  }
+  .ops-greeting strong {
+    font-size: clamp(2rem, 2vw, 3rem) !important;
+  }
+}
 @media(max-width:900px){
 
   .dashboard-heading-title{font-size:25px;}
@@ -1714,6 +1761,8 @@ section[data-testid="stSidebar"] {{
   box-sizing: border-box !important;
   overflow-x: hidden !important;
   min-width: 0 !important;
+  background: linear-gradient(180deg, rgba(4, 13, 10, 0.96), rgba(7, 18, 14, 0.98)) !important;
+  box-shadow: 14px 0 44px rgba(0,0,0,.52) !important;
 }}
 section[data-testid="stSidebar"] > div,
 section[data-testid="stSidebar"] [data-testid="stSidebarContent"] {{
@@ -1721,6 +1770,17 @@ section[data-testid="stSidebar"] [data-testid="stSidebarContent"] {{
   width: 100% !important;
   min-width: 0 !important;
   max-width: 100% !important;
+}}
+@media (min-width: 2560px) {{
+  section[data-testid="stSidebar"] > div {{
+    padding-left: 20px !important;
+    padding-right: 20px !important;
+  }}
+  section[data-testid="stSidebar"] button {{
+    min-height: 60px !important;
+    height: 60px !important;
+    font-size: 14px !important;
+  }}
 }}
 /* Let Streamlit's main area use all space released by the sidebar. */
 [data-testid="stAppViewContainer"] > .main,
@@ -1761,6 +1821,7 @@ section[data-testid="stSidebar"] > div {
   padding: 20px 16px 32px !important;
   overflow-x: hidden !important;
   overflow-y: auto !important;
+  transition: width 0.28s ease, transform 0.28s ease, opacity 0.25s ease !important;
 }
 section[data-testid="stSidebar"] [data-testid="stSidebarContent"],
 section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"],
@@ -1771,6 +1832,7 @@ section[data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] {
   max-width: 100% !important;
   min-width: 0 !important;
   box-sizing: border-box !important;
+  transition: all 0.28s ease !important;
 }
 /* Never allow a child to create a wider sidebar. */
 section[data-testid="stSidebar"] * {
@@ -1791,6 +1853,8 @@ section[data-testid="stSidebar"] select {
   margin: 0 0 16px !important;
   padding: 18px 16px !important;
   overflow: hidden !important;
+  transform: translateY(0) !important;
+  transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease, opacity 0.22s ease !important;
 }
 .brand-row { width:100% !important; min-width:0 !important; }
 .brand-logo { flex:0 0 54px !important; width:54px !important; height:54px !important; }
@@ -1798,7 +1862,7 @@ section[data-testid="stSidebar"] select {
 .brand-title { font-size:16px !important; line-height:1.05 !important; white-space:normal !important; overflow-wrap:anywhere !important; }
 .brand-sub { white-space:normal !important; overflow-wrap:anywhere !important; }
 .sidebar-live { width:100% !important; white-space:normal !important; overflow-wrap:anywhere !important; text-align:center !important; }
-/* Navigation buttons: no forced nowrap, no negative/overflow positioning. */
+/* Navigation buttons: smooth active/inactive feel without forcing a fixed width. */
 section[data-testid="stSidebar"] .stButton,
 section[data-testid="stSidebar"] .stButton > div { width:100% !important; max-width:100% !important; min-width:0 !important; }
 section[data-testid="stSidebar"] .stButton > button:not([data-testid="stSidebarCollapseButton"]):not([aria-label*="Collapse"]):not([aria-label*="Close"]) {
@@ -1810,7 +1874,21 @@ section[data-testid="stSidebar"] .stButton > button:not([data-testid="stSidebarC
   margin:5px 0 !important;
   padding:12px 14px !important;
   overflow:hidden !important;
-  transform:none !important;
+  transform: translateX(0) !important;
+  transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease, background 0.22s ease, opacity 0.22s ease !important;
+  opacity: 0.78 !important;
+  background: linear-gradient(180deg, rgba(18, 30, 26, 0.78), rgba(12, 20, 17, 0.9)) !important;
+  border: 1px solid rgba(111, 180, 155, 0.16) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 8px 12px rgba(0,0,0,0.12) !important;
+}
+section[data-testid="stSidebar"] .stButton > button:not([data-testid="stSidebarCollapseButton"]):not([aria-label*="Collapse"]):not([aria-label*="Close"]):hover {
+  transform: translateX(4px) translateY(-1px) !important;
+  opacity: 1 !important;
+  border-color: rgba(134, 255, 203, 0.42) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.07), 0 12px 18px rgba(18, 74, 46, 0.22), 0 0 16px rgba(110, 247, 184, 0.12) !important;
+}
+section[data-testid="stSidebar"] .stButton > button:not([data-testid="stSidebarCollapseButton"]):not([aria-label*="Collapse"]):not([aria-label*="Close"]):active {
+  transform: translateX(2px) translateY(1px) !important;
 }
 section[data-testid="stSidebar"] .stButton > button p,
 section[data-testid="stSidebar"] .stButton > button span {
@@ -1822,8 +1900,13 @@ section[data-testid="stSidebar"] .stButton > button span {
   text-overflow:clip !important;
   overflow:hidden !important;
   line-height:1.25 !important;
+  transition: opacity 0.2s ease, transform 0.2s ease !important;
 }
-section[data-testid="stSidebar"] .stButton > button:hover { transform:translateX(3px) !important; }
+section[data-testid="stSidebar"] .stButton > button:hover p,
+section[data-testid="stSidebar"] .stButton > button:hover span {
+  opacity: 1 !important;
+  transform: translateX(1px) !important;
+}
 /* Budget controls and columns stay inside the sidebar. */
 section[data-testid="stSidebar"] [data-testid="stHorizontalBlock"] {
   width:100% !important; max-width:100% !important; min-width:0 !important;
@@ -1839,6 +1922,23 @@ button[data-testid="stSidebarCollapseButton"],
 [data-testid="collapsedControl"] button {
   width:42px !important; min-width:42px !important; height:42px !important; min-height:42px !important;
   padding:0 !important; margin:10px !important; border-radius:50% !important;
+  transition: all 0.25s ease !important;
+  box-shadow: 0 10px 18px rgba(0,0,0,0.18) !important;
+}
+button[data-testid="stSidebarCollapseButton"]:hover,
+[data-testid="collapsedControl"] button:hover {
+  transform: scale(1.06) !important;
+  box-shadow: 0 12px 20px rgba(0,0,0,0.2), 0 0 18px rgba(110, 247, 184, 0.14) !important;
+}
+/* Keep the collapsed state soft and visually inactive instead of abruptly disappearing. */
+section[data-testid="stSidebar"][aria-expanded="false"],
+section[data-testid="stSidebar"][aria-hidden="true"] {
+  opacity: 0.92 !important;
+}
+section[data-testid="stSidebar"][aria-expanded="false"] .stButton > button,
+section[data-testid="stSidebar"][aria-hidden="true"] .stButton > button {
+  opacity: 0.6 !important;
+  background: linear-gradient(180deg, rgba(12, 18, 17, 0.76), rgba(9, 14, 12, 0.9)) !important;
 }
 /* Desktop: comfortable sidebar. */
 @media (min-width: 1400px) {
@@ -2903,33 +3003,107 @@ if view == "home":
                     for record in activity_records
                 ) or '<div class="ops-activity-row">No recent activity yet.</div>'
 
-                st.markdown(f"""
-                <div class="ops-topbar"><div class="ops-menu">☰</div><div class="ops-search">⌕ &nbsp; Search projects, employees, or reports...</div></div>
-                <div class="ops-heading"><div class="ops-greeting">Good Evening,<strong>Administrator</strong><span>Here's what's happening in your project today.</span></div><div class="ops-quote">“Building today<br>for a better tomorrow.”</div></div>
-                <div class="ops-kpi-grid">
-                    <div class="ops-kpi"><div class="ops-kpi-label">Total Projects</div><div class="ops-kpi-value">{1 if st.session_state.project.get('name') else 0}</div><div class="ops-kpi-trend">↟ Active project</div></div>
-                    <div class="ops-kpi"><div class="ops-kpi-label">Materials</div><div class="ops-kpi-value">{material_count}</div><div class="ops-kpi-trend">↟ Ledger items</div></div>
-                    <div class="ops-kpi"><div class="ops-kpi-label">Employees</div><div class="ops-kpi-value">{len(st.session_state.labor_records)}</div><div class="ops-kpi-trend">↟ Payroll records</div></div>
-                    <div class="ops-kpi"><div class="ops-kpi-label">Project Progress</div><div class="ops-kpi-value">{progress}%</div><div class="ops-kpi-trend">↟ Schedule completion</div></div>
-                </div>
-                <div class="ops-grid">
-                    <div class="ops-panel"><div class="ops-panel-head"><span>⌂ &nbsp; Project Overview</span><span>View All →</span></div>
-                        <table class="ops-table"><thead><tr><th>#</th><th>Project Name</th><th>Start Date</th><th>Status</th><th>Progress</th></tr></thead><tbody>
-                            <tr><td>1</td><td>{project_name}</td><td>{manila_now().strftime('%b %d, %Y')}</td><td><span class="ops-status">{escape_report_text(project_status)}</span></td><td><div class="ops-progress"><i style="width:{progress}%"></i></div></td></tr>
-                            {task_rows_html}
-                        </tbody></table>
+                st.markdown("""
+                <style>
+                .newdash-shell{position:relative;display:flex;flex-direction:column;gap:18px;padding:12px 6px 10px;}
+                .newdash-header{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:10px 12px 12px;}
+                .newdash-brand{display:flex;align-items:center;gap:12px;justify-content:center;flex:1;min-width:0;text-transform:uppercase;letter-spacing:.08em;color:#edfdf3;font-family:'Outfit',sans-serif;font-weight:900;font-size:clamp(1.4rem,2vw,2.25rem);}
+                .newdash-brand img{width:42px;height:42px;border-radius:12px;box-shadow:0 10px 24px rgba(61,255,165,.18),0 0 22px rgba(83,255,176,.12);}
+                .newdash-search{flex:1;max-width:540px;display:flex;align-items:center;gap:10px;padding:12px 16px;border-radius:14px;border:1px solid rgba(120,255,193,.18);background:rgba(8,15,13,.62);backdrop-filter:blur(12px);color:rgba(223,248,234,.7);font-size:12px;letter-spacing:.08em;text-transform:uppercase;box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 8px 20px rgba(0,0,0,.12);}
+                .newdash-hero{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;padding:22px 18px 18px;border-radius:24px;border:1px solid rgba(130,255,195,.18);background:linear-gradient(135deg,rgba(7,30,20,.80),rgba(8,42,30,.60));box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 18px 40px rgba(0,0,0,.18);}
+                .newdash-copy{display:flex;flex-direction:column;gap:8px;}
+                .newdash-eyebrow{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:#9ae7bf;font-weight:800;}
+                .newdash-copy h2{margin:0;color:#f4fff8;font-family:'Outfit',sans-serif;font-size:clamp(2.1rem,3vw,4rem);line-height:.95;letter-spacing:.02em;}
+                .newdash-quote{padding:10px 14px;border-left:2px solid rgba(110,247,184,.55);background:linear-gradient(90deg,rgba(110,247,184,.08),rgba(0,0,0,0));border-radius:10px;color:#9cfbc5;font-size:13px;font-weight:700;line-height:1.5;max-width:290px;text-align:right;}
+                .newdash-kpi-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;}
+                .newdash-kpi{position:relative;overflow:hidden;padding:18px 18px 16px;border-radius:20px;border:1px solid rgba(130,255,195,.18);background:linear-gradient(180deg,rgba(9,21,16,.88),rgba(8,16,12,.9));box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 12px 26px rgba(0,0,0,.12);}
+                .newdash-kpi:before{content:'';position:absolute;inset:0 auto auto 0;height:2px;width:100%;background:linear-gradient(90deg,transparent,rgba(110,247,184,.85),transparent);}
+                .newdash-kpi-label{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:#9ccdb3;font-weight:800;}
+                .newdash-kpi-value{margin-top:8px;font-family:'Outfit',sans-serif;font-size:clamp(1.7rem,2.2vw,2.8rem);font-weight:900;color:#f8fff9;line-height:1;}
+                .newdash-kpi-trend{margin-top:8px;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#7ef7b8;font-weight:800;}
+                .newdash-grid{display:grid;grid-template-columns:1.75fr .95fr;gap:18px;}
+                .newdash-panel{padding:18px 18px 12px;border-radius:22px;border:1px solid rgba(130,255,195,.18);background:linear-gradient(180deg,rgba(8,19,15,.85),rgba(6,13,10,.85));box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 14px 30px rgba(0,0,0,.12);}
+                .newdash-panel-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid rgba(130,255,195,.12);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:#9ed8b5;font-weight:800;}
+                .newdash-table{width:100%;border-collapse:collapse;color:#edfdf3;}
+                .newdash-table th,.newdash-table td{padding:10px 8px;text-align:left;border-bottom:1px solid rgba(130,255,195,.08);}
+                .newdash-table th{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#9bc6a9;font-weight:800;}
+                .newdash-table td{font-size:13px;}
+                .newdash-status{display:inline-flex;align-items:center;padding:6px 9px;border-radius:999px;border:1px solid rgba(110,247,184,.25);background:rgba(110,247,184,.08);color:#96f8cc;font-size:10px;letter-spacing:.08em;text-transform:uppercase;font-weight:800;}
+                .newdash-progress{position:relative;height:8px;border-radius:999px;background:rgba(255,255,255,.06);overflow:hidden;}
+                .newdash-progress i{position:absolute;left:0;top:0;bottom:0;border-radius:inherit;background:linear-gradient(90deg,#7ef7b8,#31d790);box-shadow:0 0 14px rgba(110,247,184,.42);}
+                .newdash-status-list{display:grid;gap:10px;}
+                .newdash-status-row{display:flex;align-items:center;justify-content:space-between;padding:12px 12px;border-radius:14px;background:rgba(255,255,255,.02);border:1px solid rgba(110,247,184,.08);}
+                .newdash-status-row .left{display:flex;align-items:center;gap:10px;color:#edfdf3;font-weight:700;}
+                .newdash-dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:#78f7b8;box-shadow:0 0 12px rgba(120,247,184,.5);} .newdash-dot.warn{background:#ffd76a;box-shadow:0 0 12px rgba(255,215,106,.42);} .newdash-dot.muted{background:#9bafb7;box-shadow:0 0 12px rgba(155,175,183,.35);} 
+                .newdash-activity{display:grid;gap:10px;}
+                .newdash-activity-row{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:14px;background:rgba(255,255,255,.02);border:1px solid rgba(110,247,184,.08);}
+                .newdash-activity-icon{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;background:rgba(110,247,184,.08);border:1px solid rgba(110,247,184,.18);color:#90f9c8;font-weight:900;}
+                .newdash-activity-copy{flex:1;color:#edfdf3;font-weight:700;line-height:1.2;}
+                .newdash-activity-copy small{display:block;margin-top:4px;color:#9cc9b1;font-size:11px;letter-spacing:.04em;}
+                .newdash-amount{font-weight:800;color:#a8f9d4;}
+                .newdash-actions{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;}
+                .newdash-action{padding:14px 12px;border-radius:16px;border:1px solid rgba(130,255,195,.18);background:linear-gradient(180deg,rgba(9,22,17,.9),rgba(7,16,12,.9));box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 12px 24px rgba(0,0,0,.12);font-weight:800;color:#ebfff3;display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;transition:transform .2s ease, box-shadow .2s ease, border-color .2s ease;}
+                .newdash-action:hover{transform:translateY(-2px);border-color:rgba(120,255,188,.38);box-shadow:0 14px 24px rgba(0,0,0,.18),0 0 16px rgba(120,255,188,.10);}
+                @media (max-width:1024px){.newdash-kpi-grid,.newdash-actions{grid-template-columns:repeat(2,minmax(0,1fr));}.newdash-grid{grid-template-columns:1fr;}.newdash-header{flex-direction:column;}.newdash-search{max-width:none;width:100%;}.newdash-hero{flex-direction:column;align-items:flex-start;}.newdash-quote{text-align:left;max-width:none;border-left:none;border-top:2px solid rgba(110,247,184,.55);padding-top:12px;}}
+                @media (max-width:640px){.newdash-kpi-grid,.newdash-actions{grid-template-columns:1fr;}.newdash-brand{font-size:1.2rem;}.newdash-copy h2{font-size:2.1rem;}}
+                </style>
+                """ + f"""
+                <div class="newdash-shell">
+                  <div class="newdash-header">
+                    <div class="newdash-brand"><img src="{AILYN_LOGO_DATA}" alt="Ailyn House Logo">AILYN HOUSE</div>
+                    <div class="newdash-search">⌕ Search projects, employees, reports...</div>
+                  </div>
+                  <div class="newdash-hero">
+                    <div class="newdash-copy">
+                      <div class="newdash-eyebrow">Project control</div>
+                      <h2>Administrator</h2>
                     </div>
-                    <div class="ops-panel"><div class="ops-panel-head"><span>● &nbsp; Project Status</span><span>{total_tasks} Tasks</span></div><div class="ops-status-list">
-                        <div class="ops-status-row"><i class="ops-dot"></i><span>In Progress</span><b>{status_counts['In Progress']}</b></div><div class="ops-status-row"><i class="ops-dot warn"></i><span>On Hold</span><b>{status_counts['On Hold']}</b></div><div class="ops-status-row"><i class="ops-dot muted"></i><span>Not Started</span><b>{status_counts['Not Started']}</b></div>
-                    </div></div>
+                    <div class="newdash-quote">“Building today<br>for a better tomorrow.”</div>
+                  </div>
+                  <div class="newdash-kpi-grid">
+                    <div class="newdash-kpi"><div class="newdash-kpi-label">Total Projects</div><div class="newdash-kpi-value">{1 if st.session_state.project.get('name') else 0}</div><div class="newdash-kpi-trend">Active project</div></div>
+                    <div class="newdash-kpi"><div class="newdash-kpi-label">Materials</div><div class="newdash-kpi-value">{material_count}</div><div class="newdash-kpi-trend">Ledger items</div></div>
+                    <div class="newdash-kpi"><div class="newdash-kpi-label">Employees</div><div class="newdash-kpi-value">{len(st.session_state.labor_records)}</div><div class="newdash-kpi-trend">Payroll records</div></div>
+                    <div class="newdash-kpi"><div class="newdash-kpi-label">Project Progress</div><div class="newdash-kpi-value">{progress}%</div><div class="newdash-kpi-trend">Schedule completion</div></div>
+                  </div>
+                  <div class="newdash-grid">
+                    <div class="newdash-panel">
+                      <div class="newdash-panel-head"><span>Project overview</span><span>View all →</span></div>
+                      <table class="newdash-table"><thead><tr><th>#</th><th>Project</th><th>Start Date</th><th>Status</th><th>Progress</th></tr></thead><tbody>
+                        <tr><td>1</td><td>{project_name}</td><td>{manila_now().strftime('%b %d, %Y')}</td><td><span class="newdash-status">{escape_report_text(project_status)}</span></td><td><div class="newdash-progress"><i style="width:{progress}%"></i></div></td></tr>
+                        {task_rows_html}
+                      </tbody></table>
+                    </div>
+                    <div class="newdash-panel">
+                      <div class="newdash-panel-head"><span>Project status</span><span>{total_tasks} tasks</span></div>
+                      <div class="newdash-status-list">
+                        <div class="newdash-status-row"><div class="left"><span class="newdash-dot"></span>In Progress</div><b>{status_counts['In Progress']}</b></div>
+                        <div class="newdash-status-row"><div class="left"><span class="newdash-dot warn"></span>On Hold</div><b>{status_counts['On Hold']}</b></div>
+                        <div class="newdash-status-row"><div class="left"><span class="newdash-dot muted"></span>Not Started</div><b>{status_counts['Not Started']}</b></div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="newdash-grid">
+                    <div class="newdash-panel">
+                      <div class="newdash-panel-head"><span>Recent activity</span><span>Latest</span></div>
+                      <div class="newdash-activity">{activity_html}</div>
+                    </div>
+                    <div class="newdash-panel">
+                      <div class="newdash-panel-head"><span>Budget status</span><span>{(balance / budget * 100) if budget else 0:.0f}% left</span></div>
+                      <div class="newdash-status-list">
+                        <div class="newdash-status-row"><div class="left"><span class="newdash-dot"></span>Budget</div><b>₱{budget:,.0f}</b></div>
+                        <div class="newdash-status-row"><div class="left"><span class="newdash-dot warn"></span>Spent</div><b>₱{used:,.0f}</b></div>
+                        <div class="newdash-status-row"><div class="left"><span class="newdash-dot muted"></span>Balance</div><b>₱{balance:,.0f}</b></div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="newdash-actions">
+                    <div class="newdash-action">＋ Add Project</div>
+                    <div class="newdash-action">◇ Add Material</div>
+                    <div class="newdash-action">♙ Process Payroll</div>
+                    <div class="newdash-action">▥ View Reports</div>
+                  </div>
                 </div>
-                <div class="ops-grid">
-                    <div class="ops-panel"><div class="ops-panel-head"><span>◷ &nbsp; Recent Activity</span><span>Latest →</span></div><div class="ops-activity">
-                        {activity_html}
-                    </div></div>
-                    <div class="ops-panel"><div class="ops-panel-head"><span>◎ &nbsp; Budget Status</span><span>{balance / budget * 100 if budget else 0:.0f}% left</span></div><div class="ops-status-list"><div class="ops-status-row"><i class="ops-dot"></i><span>Budget</span><b>₱{budget:,.0f}</b></div><div class="ops-status-row"><i class="ops-dot warn"></i><span>Spent</span><b>₱{used:,.0f}</b></div><div class="ops-status-row"><i class="ops-dot muted"></i><span>Balance</span><b>₱{balance:,.0f}</b></div></div></div>
-                </div>
-                <div class="ops-quick-grid"><div class="ops-quick"><b>＋ &nbsp; Add Project</b><span>Create new project</span></div><div class="ops-quick"><b>◇ &nbsp; Add Material</b><span>Manage inventory</span></div><div class="ops-quick"><b>♙ &nbsp; Process Payroll</b><span>Generate payroll</span></div><div class="ops-quick"><b>▥ &nbsp; View Reports</b><span>Analytics and summaries</span></div></div>
                 """, unsafe_allow_html=True)
                 quick_cols = st.columns(4)
                 for quick_col, label, target in zip(quick_cols, ("ADD PROJECT", "ADD MATERIAL", "PROCESS PAYROLL", "VIEW REPORTS"), ("planner_input", "material", "add_labor", "export")):

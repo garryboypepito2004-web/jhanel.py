@@ -2,21 +2,25 @@ import random
 import re
 
 WORD_PUZZLES = [
-    {"word": "CEMENT", "hint": "Binding material used in construction.", "scramble": "MCTEEN"},
-    {"word": "STEEL", "hint": "Strong metal used for reinforcement.", "scramble": "EETLS"},
-    {"word": "TILE", "hint": "Finish for walls and floors.", "scramble": "LITE"},
-    {"word": "BRICK", "hint": "Masonry unit used for walls.", "scramble": "CBRKI"},
-    {"word": "SAND", "hint": "Fine aggregate for mixing mortar.", "scramble": "DSAN"},
-    {"word": "ROOF", "hint": "Top protective cover of the structure.", "scramble": "OORF"},
-    {"word": "BEAM", "hint": "Horizontal structural support.", "scramble": "ABEM"},
-    {"word": "PLUMB", "hint": "Level and align pipework.", "scramble": "BPULM"},
+    {"word": "Ethnocentric — Sci-Fi Executive", "hint": "A culturally anchored leader for tomorrow's systems.", "scramble": "Ecrh—cnnEitceo tS iFci xEivue"},
+    {"word": "Strategic — Urban Visionary", "hint": "A city-first planner with long-range thinking.", "scramble": "rctSg—i aUbn Vionary"},
+    {"word": "Adaptive — Lunar Architect", "hint": "A flexible designer building beyond Earth.", "scramble": "aAetvdi—Lnr uaAcrhtie"},
+    {"word": "Operational — Quantum Analyst", "hint": "A systems-minded evaluator solving complex problems.", "scramble": "Oeprlntioa—Qtaum Aansylt"},
+    {"word": "Cultural — Future Governor", "hint": "A public leader balancing heritage and innovation.", "scramble": "lCuatru—rFueot Gvnaero"},
+    {"word": "Decisive — Data Broker", "hint": "A sharp operator turning information into action.", "scramble": "Dceisiv—Dtat Bkrero"},
+    {"word": "Resilient — Civic Engineer", "hint": "A durable builder for communities and infrastructure.", "scramble": "Rielsinet—Civc Egiineer"},
+    {"word": "Autonomous — Solar Strategist", "hint": "An independent thinker shaping sustainable futures.", "scramble": "Aotnmsou—Srol Sgtreaist"},
 ]
 
 
 def _normalize(value):
     if value is None:
         return ""
-    return re.sub(r"\s+", " ", str(value)).strip().lower()
+    text = str(value).lower()
+    text = text.replace("–", "-").replace("—", "-").replace("−", "-")
+    text = re.sub(r"[^a-z0-9\s-]", "", text)
+    text = re.sub(r"[-\s]+", " ", text)
+    return text.strip()
 
 
 def puzzle_for_level(level, seed=None):
