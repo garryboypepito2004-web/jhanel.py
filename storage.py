@@ -8,9 +8,13 @@ import time
 from pathlib import Path
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_FILE = os.path.join(APP_DIR, "ailyn_house.db")
-BACKUP_DIR = os.path.join(APP_DIR, "backups")
-SCANNER_PHOTO_DIR = os.path.join(APP_DIR, "scanner_photos")
+DATA_DIR = os.getenv("AILYN_DATA_DIR", APP_DIR)
+os.makedirs(DATA_DIR, exist_ok=True)
+DB_FILE = os.path.join(DATA_DIR, "ailyn_house.db")
+BACKUP_DIR = os.path.join(DATA_DIR, "backups")
+SCANNER_PHOTO_DIR = os.path.join(DATA_DIR, "scanner_photos")
+os.makedirs(BACKUP_DIR, exist_ok=True)
+os.makedirs(SCANNER_PHOTO_DIR, exist_ok=True)
 
 
 def _default_state_dict():

@@ -2115,6 +2115,46 @@ section[data-testid="stSidebar"] .sidebar-offline {
     letter-spacing: .12em;
     text-align: center;
 }
+.ops-topbar { display:flex; align-items:center; gap:14px; margin:-4px 0 20px; }
+.ops-menu { color:#72f7b0; font-size:22px; padding:4px 9px; border:1px solid rgba(184,255,211,.18); border-radius:10px; background:rgba(3,28,18,.48); }
+.ops-search { flex:1; max-width:620px; padding:11px 16px; color:#bfead0; font-size:11px; border:1px solid rgba(184,255,211,.16); border-radius:11px; background:rgba(3,28,18,.52); }
+.ops-heading { display:flex; align-items:flex-end; justify-content:space-between; gap:20px; margin:4px 0 20px; }
+.ops-greeting { color:#b8dfc8; font-size:16px; }
+.ops-greeting strong { display:block; color:#fff; font-family:'Outfit',sans-serif; font-size:37px; line-height:.98; }
+.ops-greeting span { display:block; margin-top:8px; color:#9fc5ae; font-size:12px; }
+.ops-quote { max-width:250px; padding-left:16px; color:#c9ead6; font-size:12px; line-height:1.5; border-left:3px solid #72f7b0; }
+.ops-kpi-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-bottom:15px; }
+.ops-kpi { min-height:84px; padding:15px; border:1px solid rgba(184,255,211,.20); border-radius:15px; background:linear-gradient(145deg,rgba(12,53,34,.70),rgba(3,24,16,.64)); box-shadow:0 14px 30px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.10); backdrop-filter:blur(18px); }
+.ops-kpi-label { color:#a9d9ba; font-size:9px; font-weight:800; letter-spacing:.12em; text-transform:uppercase; }
+.ops-kpi-value { margin-top:8px; color:#fff; font-family:'Outfit',sans-serif; font-size:25px; font-weight:900; }
+.ops-kpi-trend { margin-top:4px; color:#72f7b0; font-size:10px; }
+.ops-grid { display:grid; grid-template-columns:1.7fr .9fr; gap:14px; margin-bottom:14px; }
+.ops-panel { overflow:hidden; border:1px solid rgba(184,255,211,.20); border-radius:15px; background:linear-gradient(145deg,rgba(12,53,34,.66),rgba(3,24,16,.60)); box-shadow:0 18px 36px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.10); backdrop-filter:blur(18px); }
+.ops-panel-head { display:flex; justify-content:space-between; padding:15px 16px; border-bottom:1px solid rgba(184,255,211,.12); color:#fff; font-size:12px; font-weight:900; letter-spacing:.08em; text-transform:uppercase; }
+.ops-panel-head span { color:#72f7b0; font-size:10px; }
+.ops-table { width:100%; border-collapse:collapse; font-size:10px; }
+.ops-table th { padding:10px 12px; color:#82b99a; font-size:8px; letter-spacing:.12em; text-align:left; text-transform:uppercase; }
+.ops-table td { padding:11px 12px; color:#d6f1df; border-top:1px solid rgba(184,255,211,.08); }
+.ops-status { display:inline-block; padding:4px 8px; border-radius:9px; color:#d9ffe8; background:rgba(32,180,106,.32); }
+.ops-status-muted { background:rgba(126,154,161,.30); }
+.ops-progress { min-width:76px; height:6px; overflow:hidden; border-radius:9px; background:rgba(114,247,176,.12); }
+.ops-progress i { display:block; height:100%; border-radius:inherit; background:#22d58c; }
+.ops-status-list { padding:14px 16px; }
+.ops-status-row { display:grid; grid-template-columns:10px 1fr auto; gap:9px; align-items:center; padding:10px 0; color:#cdebd8; font-size:11px; border-bottom:1px solid rgba(184,255,211,.08); }
+.ops-status-row:last-child { border-bottom:0; }
+.ops-dot { width:10px; height:10px; border-radius:50%; background:#32da91; box-shadow:0 0 12px rgba(50,218,145,.45); }
+.ops-dot.warn { background:#efbd49; box-shadow:0 0 12px rgba(239,189,73,.35); }
+.ops-dot.muted { background:#91a8af; box-shadow:none; }
+.ops-activity { padding:4px 16px 10px; }
+.ops-activity-row { display:grid; grid-template-columns:28px 1fr auto; gap:10px; align-items:center; padding:10px 0; color:#cdebd8; font-size:10px; border-bottom:1px solid rgba(184,255,211,.08); }
+.ops-activity-icon { display:grid; place-items:center; width:28px; height:28px; border-radius:9px; color:#72f7b0; background:rgba(47,190,123,.18); }
+.ops-activity-row small { display:block; margin-top:3px; color:#82ae94; }
+.ops-quick-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }
+.ops-quick { padding:14px; color:#d8f6e1; text-align:center; border:1px solid rgba(184,255,211,.18); border-radius:14px; background:rgba(5,35,22,.58); }
+.ops-quick b { display:block; color:#fff; font-size:12px; }
+.ops-quick span { display:block; margin-top:6px; color:#8ebba0; font-size:9px; }
+@media(max-width:900px){.ops-kpi-grid,.ops-quick-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.ops-grid{grid-template-columns:1fr}.ops-heading{align-items:flex-start;flex-direction:column}}
+@media(max-width:600px){.ops-greeting strong{font-size:30px}.ops-quote{max-width:none}.ops-kpi-grid,.ops-quick-grid{gap:8px}.ops-kpi{padding:12px}}
 .mobile-nav-marker {
     display: none !important;
 }
@@ -2492,110 +2532,65 @@ if view == "home":
                 st.rerun()
 
     if section == "overview":
-        overdue_tasks = [
-            task for task in st.session_state.planner_tasks
-            if task.get("date_obj", "") < manila_now().strftime("%Y-%m-%d")
-               and task.get("status") != "Completed"
-        ]
-        if balance < 0:
-            st.error(f"Budget warning: project is over budget by PHP {abs(balance):,.2f}.")
-        if overdue_tasks:
-            st.warning(f"{len(overdue_tasks)} scheduled task(s) are overdue.")
+                project_name = escape_report_text(st.session_state.project.get("name", "Ailyn House Project"))
+                project_status = st.session_state.project.get("status", "Active")
+                task_rows = sorted(st.session_state.planner_tasks, key=lambda item: item.get("date_obj", ""), reverse=True)[:5]
+                material_count = len([record for record in st.session_state.records if record.get("type") == "material"])
+                activity_records = list(reversed(st.session_state.records))[:4]
+                total_tasks = len(st.session_state.planner_tasks)
+                completed_tasks = len([task for task in st.session_state.planner_tasks if task.get("status") == "Completed"])
+                progress = int(completed_tasks / total_tasks * 100) if total_tasks else 0
+                status_counts = {"In Progress": 0, "On Hold": 0, "Not Started": 0}
+                for task in st.session_state.planner_tasks:
+                        status_counts[task.get("status", "Not Started")] = status_counts.get(task.get("status", "Not Started"), 0) + 1
+                task_rows_html = "".join(
+                    f"<tr><td>{index}</td><td>{escape_report_text(task.get('name', 'Work task'))}</td>"
+                    f"<td>{escape_report_text(task.get('date_obj', ''))}</td>"
+                    f"<td><span class='ops-status {'ops-status-muted' if task.get('status') == 'Not Started' else ''}'>"
+                    f"{escape_report_text(task.get('status', 'Not Started'))}</span></td>"
+                    f"<td><div class='ops-progress'><i style='width:{100 if task.get('status') == 'Completed' else 50 if task.get('status') == 'In Progress' else 0}%'></i></div></td></tr>"
+                    for index, task in enumerate(task_rows, 2)
+                )
+                activity_html = "".join(
+                    f"<div class='ops-activity-row'><div class='ops-activity-icon'>{'▣' if record.get('type') == 'expense' else '▱'}</div>"
+                    f"<div>{escape_report_text(record.get('name', 'Transaction'))}<small>{escape_report_text(record.get('type', 'Record').title())} · {escape_report_text(record.get('date', ''))}</small></div>"
+                    f"<span>₱{float(record.get('amount', 0) or 0):,.0f}</span></div>"
+                    for record in activity_records
+                ) or '<div class="ops-activity-row">No recent activity yet.</div>'
 
-        m1, m2, m3, m4 = st.columns(4)
-        with m1:
-            st.metric("TOTAL BUDGET", f"₱{budget:,.2f}")
-        with m2:
-            st.metric("TOTAL EXPENSES", f"₱{used:,.2f}")
-        with m3:
-            st.metric("REMAINING BALANCE", f"₱{balance:,.2f}")
-        with m4:
-            st.metric(
-                f"PROJECT SPENT THIS MONTH ({manila_now().strftime('%b %Y').upper()})",
-                f"₱{monthly_construction_spend():,.2f}",
-            )
-
-        st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
-        left, right = st.columns([1.05, 1])
-        with left:
-            st.markdown(f"""
-            <div class="dash-section">
-              <div class="section-head"><div class="section-title" style="margin:0">EXPENSES OVERVIEW</div><span style="font-size:11px;color:#7b867f;font-weight:700">THIS PROJECT</span></div>
-              <div class="donut-wrap">
-                <div class="donut" style="--p1:{p1}deg;--p2:{p2}deg;--p3:{p3}deg"><div class="donut-center">₱{used:,.0f}<small>Total Expenses</small></div></div>
-                <div class="legend">
-                  <div class="legend-row"><span><i class="dot" style="background:#075c28"></i>Materials</span><b>₱{material:,.2f}</b></div>
-                  <div class="legend-row"><span><i class="dot" style="background:#e0aa25"></i>Expenses</span><b>₱{expenses:,.2f}</b></div>
-                  <div class="legend-row"><span><i class="dot" style="background:#e85d4a"></i>Excess</span><b>₱{excess:,.2f}</b></div>
+                st.markdown(f"""
+                <div class="ops-topbar"><div class="ops-menu">☰</div><div class="ops-search">⌕ &nbsp; Search projects, employees, or reports...</div></div>
+                <div class="ops-heading"><div class="ops-greeting">Good Evening,<strong>Administrator</strong><span>Here's what's happening in your project today.</span></div><div class="ops-quote">“Building today<br>for a better tomorrow.”</div></div>
+                <div class="ops-kpi-grid">
+                    <div class="ops-kpi"><div class="ops-kpi-label">Total Projects</div><div class="ops-kpi-value">{1 if st.session_state.project.get('name') else 0}</div><div class="ops-kpi-trend">↟ Active project</div></div>
+                    <div class="ops-kpi"><div class="ops-kpi-label">Materials</div><div class="ops-kpi-value">{material_count}</div><div class="ops-kpi-trend">↟ Ledger items</div></div>
+                    <div class="ops-kpi"><div class="ops-kpi-label">Employees</div><div class="ops-kpi-value">{len(st.session_state.labor_records)}</div><div class="ops-kpi-trend">↟ Payroll records</div></div>
+                    <div class="ops-kpi"><div class="ops-kpi-label">Project Progress</div><div class="ops-kpi-value">{progress}%</div><div class="ops-kpi-trend">↟ Schedule completion</div></div>
                 </div>
-              </div>
-            </div>
-            """, unsafe_allow_html=True)
-        with right:
-            tx = list(reversed(st.session_state.records))[:5]
-            tx_html = ""
-            if tx:
-                for r in tx:
-                    icon = "🛒" if r.get("type") == "material" else "▣" if r.get("type") == "expense" else "+"
-                    tx_html += f'''<div class="tx-row"><div class="tx-left"><div class="tx-icon">{icon}</div><div><div class="tx-name">{r.get("name", "Transaction")}</div><div class="tx-type">{str(r.get("type", "")).title()}</div></div></div><div class="tx-right">₱{float(r.get("amount", 0)):,.2f}<div class="tx-date">{r.get("date", "")}</div></div></div>'''
-            else:
-                tx_html = '<div style="padding:30px 0;color:#7a857e;text-align:center">No transactions yet.</div>'
-            st.markdown(
-                f'''<div class="dash-section"><div class="section-head"><div class="section-title" style="margin:0">RECENT TRANSACTIONS</div><span style="font-size:11px;color:#7b867f">LATEST 5</span></div>{tx_html}</div>''',
-                unsafe_allow_html=True)
-
-        monthly_totals = defaultdict(float)
-        for record in st.session_state.records:
-            if record.get("type") in {"material", "expense"}:
-                monthly_totals[month_key(record)] += float(record.get("amount", 0) or 0)
-        for record in st.session_state.labor_records:
-            monthly_totals[month_key(record)] += float(record.get("net", 0) or 0)
-        for record in st.session_state.payroll_expenses:
-            monthly_totals[month_key(record)] += float(record.get("price", 0) or 0)
-        chart_months = sorted(monthly_totals)[-6:]
-        monthly_chart = pd.DataFrame([
-            {"Month": month, "Total spending": monthly_totals[month]}
-            for month in chart_months
-        ])
-        notes_value = st.session_state.get("client_notes", "")
-        chart_col, notes_col = st.columns([1.15, .85])
-        with chart_col:
-            st.markdown("<div class='dash-section chart-panel'><div class='section-title'>MONTHLY SPENDING</div>", unsafe_allow_html=True)
-            if monthly_chart.empty:
-                st.caption("Spending history will appear here after the first saved record.")
-            else:
-                st.bar_chart(monthly_chart, x="Month", y="Total spending", color="#72f7b0", height=240)
-            st.markdown("</div>", unsafe_allow_html=True)
-        with notes_col:
-            st.markdown("<div class='dash-section notes-panel'><div class='section-title'>CLIENT NOTES</div>", unsafe_allow_html=True)
-            notes = st.text_area(
-                "Client notes",
-                value=notes_value,
-                placeholder="Add updates, approvals, or client requests...",
-                height=150,
-                label_visibility="collapsed",
-                key="dashboard_client_notes",
-            )
-            if st.button("SAVE NOTES", key="save_client_notes", use_container_width=True):
-                st.session_state.client_notes = notes.strip()
-                persist_state()
-                st.success("Client notes saved.")
-            st.markdown("</div>", unsafe_allow_html=True)
-
-        st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
-        st.markdown(f"""
-        <div class="dash-section">
-          <div class="schedule">
-            <div class="schedule-icon">▦</div>
-            <div><div class="schedule-title">TODAY'S SCHEDULE</div><div style="font-weight:800;font-size:13px;margin-top:4px">{manila_now().strftime('%B %d, %Y (%A)')}</div><div class="schedule-muted">{len(today_tasks)} task(s) scheduled for today.</div></div>
-            <div style="width:1px;height:58px;background:#dfe8e1;margin:0 12px"></div>
-            <div><div class="schedule-title">UPCOMING TASKS</div><div style="font-weight:800;font-size:13px;margin-top:4px">{len(upcoming_tasks)} task(s) planned</div><div class="schedule-muted">Stay on track and manage your construction tasks.</div></div>
-            <div style="margin-left:auto"><div class="open-planner">▣ &nbsp; Open Planner</div></div>
-          </div>
-        </div>
-        """, unsafe_allow_html=True)
-        if st.button("OPEN CONSTRUCTION PLANNER", use_container_width=True):
-            set_view("planner_output")
+                <div class="ops-grid">
+                    <div class="ops-panel"><div class="ops-panel-head"><span>⌂ &nbsp; Project Overview</span><span>View All →</span></div>
+                        <table class="ops-table"><thead><tr><th>#</th><th>Project Name</th><th>Start Date</th><th>Status</th><th>Progress</th></tr></thead><tbody>
+                            <tr><td>1</td><td>{project_name}</td><td>{manila_now().strftime('%b %d, %Y')}</td><td><span class="ops-status">{escape_report_text(project_status)}</span></td><td><div class="ops-progress"><i style="width:{progress}%"></i></div></td></tr>
+                            {task_rows_html}
+                        </tbody></table>
+                    </div>
+                    <div class="ops-panel"><div class="ops-panel-head"><span>● &nbsp; Project Status</span><span>{total_tasks} Tasks</span></div><div class="ops-status-list">
+                        <div class="ops-status-row"><i class="ops-dot"></i><span>In Progress</span><b>{status_counts['In Progress']}</b></div><div class="ops-status-row"><i class="ops-dot warn"></i><span>On Hold</span><b>{status_counts['On Hold']}</b></div><div class="ops-status-row"><i class="ops-dot muted"></i><span>Not Started</span><b>{status_counts['Not Started']}</b></div>
+                    </div></div>
+                </div>
+                <div class="ops-grid">
+                    <div class="ops-panel"><div class="ops-panel-head"><span>◷ &nbsp; Recent Activity</span><span>Latest →</span></div><div class="ops-activity">
+                        {activity_html}
+                    </div></div>
+                    <div class="ops-panel"><div class="ops-panel-head"><span>◎ &nbsp; Budget Status</span><span>{balance / budget * 100 if budget else 0:.0f}% left</span></div><div class="ops-status-list"><div class="ops-status-row"><i class="ops-dot"></i><span>Budget</span><b>₱{budget:,.0f}</b></div><div class="ops-status-row"><i class="ops-dot warn"></i><span>Spent</span><b>₱{used:,.0f}</b></div><div class="ops-status-row"><i class="ops-dot muted"></i><span>Balance</span><b>₱{balance:,.0f}</b></div></div></div>
+                </div>
+                <div class="ops-quick-grid"><div class="ops-quick"><b>＋ &nbsp; Add Project</b><span>Create new project</span></div><div class="ops-quick"><b>◇ &nbsp; Add Material</b><span>Manage inventory</span></div><div class="ops-quick"><b>♙ &nbsp; Process Payroll</b><span>Generate payroll</span></div><div class="ops-quick"><b>▥ &nbsp; View Reports</b><span>Analytics and summaries</span></div></div>
+                """, unsafe_allow_html=True)
+                quick_cols = st.columns(4)
+                for quick_col, label, target in zip(quick_cols, ("ADD PROJECT", "ADD MATERIAL", "PROCESS PAYROLL", "VIEW REPORTS"), ("planner_input", "material", "add_labor", "export")):
+                        with quick_col:
+                                if st.button(label, key=f"ops_quick_{target}", use_container_width=True):
+                                        set_view(target)
 
     elif section == "financials":
         st.subheader("Financial Overview")
