@@ -344,6 +344,20 @@ if not os.path.exists(MATERIALS_EXCEL_FILE) or not os.path.exists(LABOR_EXCEL_FI
     write_separate_excel_files(st.session_state)
 
 
+# ----------------------------------------------------------------
+# RESPONSIVE SIDEBAR CONTROL
+# Compact / Wide presets + CSS drag-friendly layout.
+# The Streamlit sidebar can also be dragged from its right edge in
+# browsers that expose the native sidebar resize handle.
+# ----------------------------------------------------------------
+if "sidebar_mode" not in st.session_state:
+    st.session_state.sidebar_mode = "wide"
+
+def set_sidebar_mode(mode):
+    st.session_state.sidebar_mode = mode
+    st.rerun()
+
+
 def set_view(v):
     st.session_state.view = v
     persist_state()
@@ -2128,6 +2142,65 @@ section[data-testid="stSidebar"] > div {
 </style>
 """, unsafe_allow_html=True)
 
+# Responsive / resizable sidebar styling
+sidebar_mode = st.session_state.get("sidebar_mode", "wide")
+sidebar_width = "360px" if sidebar_mode == "wide" else "230px"
+sidebar_min = "230px" if sidebar_mode == "wide" else "190px"
+sidebar_max = "520px"
+
+st.markdown(f"""
+<style>
+/* Sidebar width presets. The right edge remains available for native drag resizing. */
+section[data-testid="stSidebar"] {{
+    width: {sidebar_width} !important;
+    min-width: {sidebar_min} !important;
+    max-width: {sidebar_max} !important;
+    transition: width .22s ease, min-width .22s ease;
+}}
+section[data-testid="stSidebar"] > div {{
+    width: 100% !important;
+    min-width: 0 !important;
+}}
+/* Keep the dashboard from leaving a dead/empty strip when the sidebar is compact. */
+[data-testid="stAppViewContainer"] > .main {{
+    transition: margin-left .22s ease, width .22s ease;
+}}
+.sidebar-resize-note {{
+    margin: 4px 3px 12px;
+    padding: 8px 10px;
+    border: 1px solid rgba(114,247,176,.13);
+    border-radius: 10px;
+    background: rgba(114,247,176,.045);
+    color: #91cbaa !important;
+    font-size: 8px;
+    line-height: 1.35;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+}}
+.sidebar-size-row {{
+    display: flex;
+    gap: 6px;
+    margin: 4px 0 10px;
+}}
+.sidebar-size-row span {{
+    flex: 1;
+    text-align: center;
+    padding: 6px 4px;
+    border: 1px solid rgba(114,247,176,.12);
+    border-radius: 9px;
+    color: #8feeb2 !important;
+    font-size: 8px;
+    font-weight: 800;
+    letter-spacing: .08em;
+}}
+@media (max-width: 900px) {{
+    section[data-testid="stSidebar"] {{
+        min-width: 210px !important;
+    }}
+}}
+</style>
+""", unsafe_allow_html=True)
+
 with st.sidebar:
     st.markdown(f"""
     <div class="sidebar-brand">
@@ -2143,6 +2216,22 @@ with st.sidebar:
     st.markdown(
         f"<div class='sidebar-live'><span>●</span> &nbsp; LIVE SYSTEM &nbsp; • &nbsp; "
         f"{manila_now().strftime('%I:%M %p  |  %b %d')}</div>",
+        unsafe_allow_html=True
+    )
+
+    st.markdown(
+        f"<div class='sidebar-size-row'><span>{'WIDE' if sidebar_mode == 'wide' else 'COMPACT'} MODE</span><span>DRAG EDGE ↔</span></div>",
+        unsafe_allow_html=True
+    )
+    size_left, size_right = st.columns(2)
+    with size_left:
+        if st.button("↔ WIDE", use_container_width=True, key="sidebar_wide"):
+            set_sidebar_mode("wide")
+    with size_right:
+        if st.button("⇥ COMPACT", use_container_width=True, key="sidebar_compact"):
+            set_sidebar_mode("compact")
+    st.markdown(
+        "<div class='sidebar-resize-note'>Use WIDE/COMPACT for quick sizing, or drag the sidebar's right edge when your Streamlit browser exposes the resize handle.</div>",
         unsafe_allow_html=True
     )
 
@@ -2266,6 +2355,23 @@ if view == "home":
             f"₱{monthly_construction_spend():,.2f}",
         )
 
+    # Primary workspaces stay at the top of the dashboard for faster access.
+    st.markdown("""
+        <div class="dashboard-action-rail">
+            <div class="dashboard-action-copy">
+                <span>PRIMARY WORKSPACES</span>
+                <small>Open Materials or Payroll directly from the dashboard.</small>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    material_action, payroll_action = st.columns(2)
+    with material_action:
+        if st.button("◇  MATERIALS", key="dashboard_materials_workspace_top", use_container_width=True):
+            set_view("material")
+    with payroll_action:
+        if st.button("♙  PAYROLL", key="dashboard_payroll_workspace_top", use_container_width=True):
+            set_view("payroll_dashboard")
+
     st.markdown(f"""
         <div class="dash-section integrated-control-strip">
             <div class="section-head"><div class="section-title" style="margin:0">INTEGRATED OPERATIONS</div><span>CONSTRUCTION + PAYROLL</span></div>
@@ -2323,22 +2429,7 @@ if view == "home":
     if st.button("OPEN CONSTRUCTION PLANNER", use_container_width=True):
         set_view("planner_output")
 
-        st.markdown("""
-        <div class="dashboard-action-rail">
-            <div class="dashboard-action-copy">
-                <span>QUICK OPERATIONS</span>
-                <small>Open one focused workspace at a time.</small>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        material_action, payroll_action = st.columns(2)
-        with material_action:
-                if st.button("◇  MATERIALS WORKSPACE", key="dashboard_materials_workspace", use_container_width=True):
-                        set_view("material")
-        with payroll_action:
-                if st.button("♙  PAYROLL WORKSPACE", key="dashboard_payroll_workspace", use_container_width=True):
-                        set_view("payroll_ledger")
-
+    
 elif view == "payroll_dashboard":
     payroll_labor = sum(float(record.get("net", 0)) for record in st.session_state.labor_records)
     payroll_expenses = sum(float(record.get("price", 0)) for record in st.session_state.payroll_expenses)
